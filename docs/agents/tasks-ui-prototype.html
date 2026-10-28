@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tasks view prototype</title>
+<style>
+:root{
+  --bg:#141414; --bg2:#1b1b1b; --panel:#1f1f1f; --hover:#ffffff0f; --sel:#ffffff17;
+  --line:#ffffff1a; --text:#ececec; --text2:#a3a3a3; --text3:#6f6f6f;
+  --accent:#1e96eb; --red:#ff5a52; --orange:#f5a524; --blue:#4a9dff; --green:#4cc38a;
+  font-family:Inter,system-ui,Segoe UI,sans-serif; font-size:14px; color:var(--text);
+}
+*{box-sizing:border-box} body{margin:0;background:#0b0b0b;min-height:100vh}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+svg{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.bar{display:flex;gap:8px;align-items:center;padding:10px 16px;background:#000;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:50;flex-wrap:wrap}
+.bar b{margin-right:8px} .bar button{padding:5px 10px;border:1px solid var(--line);border-radius:6px;color:var(--text2)}
+.bar button.on{background:var(--sel);color:var(--text)} .bar .hint{color:var(--text3);font-size:12px;margin-left:auto}
+.stage{display:flex;justify-content:center;padding:20px}
+/* desktop frame */
+.desk{width:min(1280px,100%);height:760px;display:flex;background:var(--bg);border:1px solid var(--line);border-radius:10px;overflow:hidden;position:relative}
+.side{width:220px;background:var(--bg2);border-right:1px solid var(--line);padding:12px 8px;display:flex;flex-direction:column;gap:2px;flex:none}
+.ws{display:flex;align-items:center;gap:8px;padding:6px 8px;font-weight:600;margin-bottom:8px}
+.ws i{width:18px;height:18px;border-radius:5px;background:linear-gradient(135deg,#e5533d,#4a6cf7)}
+.mi{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:6px;color:var(--text);text-align:left;width:100%}
+.mi:hover{background:var(--hover)} .mi.active{background:var(--sel)} .mi.new{outline:1px dashed var(--accent);outline-offset:-1px}
+.mi .tag{margin-left:auto;font-size:10px;color:var(--accent)}
+.sec{margin:14px 10px 4px;color:var(--text3);font-size:12px}
+/* tasks page */
+.page{flex:1;display:flex;min-width:0}
+.nav{width:210px;border-right:1px solid var(--line);padding:14px 8px;flex:none;display:flex;flex-direction:column;gap:2px}
+.nav .mi{padding:7px 10px} .cnt{margin-left:auto;color:var(--text3);font-size:12px}
+.nav .div{height:1px;background:var(--line);margin:8px 10px}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.head{display:flex;align-items:center;gap:8px;padding:16px 24px 8px}
+.head h1{font-size:20px;margin:0;font-weight:700} .head .sp{flex:1}
+.ib{padding:5px;border-radius:6px;color:var(--text2)} .ib:hover{background:var(--hover);color:var(--text)}
+.add{margin:6px 24px 10px;display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:0 12px}
+.add:focus-within{border-color:var(--accent)} .add input{flex:1;background:none;border:0;outline:0;color:var(--text);padding:10px 0;font:inherit}
+.add .where{font-size:11px;color:var(--text3);white-space:nowrap}
+.list{flex:1;overflow:auto;padding:0 24px 24px}
+.grp{margin-top:10px} .gh{display:flex;align-items:center;gap:6px;padding:6px 0;color:var(--text2);font-size:12px;font-weight:600;cursor:pointer;user-select:none}
+.gh svg{transition:transform .15s} .grp.closed .gh svg{transform:rotate(-90deg)} .grp.closed .rows{display:none}
+.gh .n{color:var(--text3);font-weight:400} .gh.od{color:var(--red)}
+.row{display:flex;align-items:flex-start;gap:10px;padding:8px 8px;border-radius:6px;cursor:pointer;position:relative}
+.row:hover{background:var(--hover)} .row.sel{background:var(--sel)}
+.row.leaving{opacity:.35}
+.cb{width:16px;height:16px;border-radius:4px;border:1.6px solid var(--text3);margin-top:2px;flex:none;display:grid;place-items:center}
+.cb.p3{border-color:var(--red);background:#ff5a5222}.cb.p2{border-color:var(--orange);background:#f5a52422}.cb.p1{border-color:var(--blue);background:#4a9dff22}
+.cb:hover{filter:brightness(1.5)} .row.done .cb{background:var(--text3);border-color:var(--text3)} .row.done .cb::after{content:"";width:8px;height:4px;border-left:2px solid #111;border-bottom:2px solid #111;transform:rotate(-45deg) translate(1px,-1px)}
+.body{flex:1;min-width:0} .title{line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row.done .title{text-decoration:line-through;color:var(--text3)}
+.src{display:flex;align-items:center;gap:5px;color:var(--text3);font-size:12px;margin-top:1px;white-space:nowrap;overflow:hidden}
+.src:hover{color:var(--accent)} .src svg{width:12px;height:12px}
+.right{display:flex;align-items:center;gap:8px;flex:none;line-height:20px;font-size:12px;color:var(--text2)}
+.right .od{color:var(--red)} .right .flag{width:13px;height:13px}
+.quick{display:none;gap:2px} .row:hover .quick{display:flex} .row:hover .hide-on-hover{display:none}
+.empty{display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px;padding:90px 20px;color:var(--text2)}
+.empty h3{margin:8px 0 0;color:var(--text);font-size:16px} .empty p{margin:0;max-width:340px;color:var(--text3)}
+.empty svg{width:44px;height:44px;stroke-width:1.2;color:var(--text3)}
+.btn{margin-top:10px;padding:6px 12px;border-radius:6px;background:var(--sel);color:var(--text)} .btn:hover{background:#ffffff26}
+/* detail panel */
+.detail{width:300px;border-left:1px solid var(--line);padding:16px;flex:none;display:flex;flex-direction:column;gap:14px;background:var(--bg2)}
+.detail h2{margin:0;font-size:16px;line-height:22px;font-weight:600} .lbl{color:var(--text3);font-size:11px;margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em}
+.srcbox{border:1px solid var(--line);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:4px}
+.srcbox .open{color:var(--accent);margin-top:4px;text-align:left}
+/* editor (date + priority) */
+.ed{display:flex;flex-direction:column;gap:12px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{padding:5px 10px;border-radius:999px;border:1px solid var(--line);color:var(--text2);display:flex;align-items:center;gap:5px}
+.chip:hover{background:var(--hover);color:var(--text)} .chip.on{border-color:var(--accent);color:var(--accent)}
+.chip.p3 svg{color:var(--red)}.chip.p2 svg{color:var(--orange)}.chip.p1 svg{color:var(--blue)}
+.ed input[type=date]{background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:5px 8px;color-scheme:dark;font:inherit}
+.pop{position:absolute;z-index:30;width:290px;background:#242424;border:1px solid var(--line);border-radius:10px;padding:14px;box-shadow:0 12px 40px #000a}
+.toast{position:absolute;left:50%;bottom:20px;transform:translateX(-50%);background:#2b2b2b;border:1px solid var(--line);border-radius:8px;padding:9px 14px;display:flex;gap:14px;align-items:center;z-index:40;box-shadow:0 8px 24px #000a;white-space:nowrap}
+.toast button{color:var(--accent);font-weight:600}
+.note{position:absolute;right:12px;top:10px;font-size:11px;color:var(--text3)}
+/* mobile */
+.phone{width:375px;height:760px;background:var(--bg);border:1px solid var(--line);border-radius:28px;overflow:hidden;position:relative;display:flex;flex-direction:column}
+.m-head{padding:18px 16px 4px;display:flex;align-items:center}.m-head h1{font-size:24px;margin:0;flex:1}
+.m-chips{display:flex;gap:8px;overflow-x:auto;padding:8px 16px;scrollbar-width:none}
+.m-chips .chip{white-space:nowrap;padding:6px 12px}.m-chips .chip .cnt{margin:0 0 0 2px}
+.phone .list{padding:0 8px 90px}.phone .row{padding:11px 8px}.phone .src{font-size:12px}
+.phone .gh{padding:10px 8px 4px}
+.fab{position:absolute;right:16px;bottom:84px;width:48px;height:48px;border-radius:50%;background:var(--accent);display:grid;place-items:center;color:#fff;box-shadow:0 6px 18px #0009}
+.fab svg{width:22px;height:22px;stroke-width:2}
+.tabs{position:absolute;bottom:0;left:0;right:0;height:68px;background:var(--bg2);border-top:1px solid var(--line);display:flex;justify-content:space-around;align-items:center}
+.tabs button{color:var(--text3);padding:10px}.tabs button.on{color:var(--accent)} .tabs svg{width:22px;height:22px}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:#242424;border-radius:18px 18px 0 0;padding:18px 16px 28px;z-index:40;box-shadow:0 -10px 40px #000b}
+.sheet h2{margin:0 0 4px;font-size:16px}.sheet .sub{color:var(--text3);font-size:12px;margin-bottom:14px}
+.scrim{position:absolute;inset:0;background:#0007;z-index:35}
+.phone .toast{bottom:80px}
+.m-add{margin:4px 16px 8px}
+</style>
+</head>
+<body>
+<div class="bar">
+  <b>Tasks view prototype</b>
+  <button id="b-desk" class="on">Desktop</button><button id="b-mob">Android</button>
+  <button id="b-reset">Reset data</button>
+  <button id="b-empty">Preview empty state: off</button>
+  <span class="hint">Clickable mock, not wired to AFFiNE. Try: check a task, set a date on an Inbox row, add a task.</span>
+</div>
+<div class="stage"><div id="root"></div></div>
+<script>
+const I = {
+  inbox:'<svg viewBox="0 0 24 24"><path d="M3 13l3-8h12l3 8v6H3z"/><path d="M3 13h5l1 3h6l1-3h5"/></svg>',
+  today:'<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/><path d="M12 13v4"/></svg>',
+  tmr:'<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M9 15h6"/></svg>',
+  week:'<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M8 14h1M12 14h1M16 14h1M8 17h1M12 17h1"/></svg>',
+  all:'<svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h14"/></svg>',
+  done:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg>',
+  chev:'<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>',
+  doc:'<svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/></svg>',
+  flag:'<svg viewBox="0 0 24 24"><path d="M6 21V4M6 5h12l-2 4 2 4H6"/></svg>',
+  cal:'<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>',
+  plus:'<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  sort:'<svg viewBox="0 0 24 24"><path d="M7 4v16M4 17l3 3 3-3M17 20V4M14 7l3-3 3 3"/></svg>',
+  more:'<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>',
+  search:'<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>',
+  home:'<svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9H4z"/></svg>',
+  jrn:'<svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 9h6M9 13h6"/></svg>',
+  bell:'<svg viewBox="0 0 24 24"><path d="M6 17V11a6 6 0 0112 0v6l2 2H4z"/></svg>',
+  ai:'<svg viewBox="0 0 24 24"><path d="M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"/></svg>',
+  set:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/></svg>',
+  chk:'<svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg>',
+};
+const D0 = new Date(); D0.setHours(0,0,0,0);
+const iso = o => { const d=new Date(D0); d.setDate(d.getDate()+o); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` };
+const off = s => Math.round((new Date(s+'T00:00')-D0)/864e5);
+const seed = () => ([
+  {id:1,t:'Review the draft budget and send comments',doc:'Project Kickoff',h:'TODO',due:null,p:0,done:false},
+  {id:2,t:'Book a room for the follow-up meeting',doc:'Project Kickoff',h:'TODO',due:null,p:0,done:false},
+  {id:3,t:'Ask landlord about the boiler service',doc:'Home',h:'Admin',due:null,p:0,done:false},
+  {id:4,t:'Renew passport',doc:'Home',h:'Admin',due:iso(-2),p:3,done:false},
+  {id:5,t:'Morning run',doc:'Journal 2026-10-28',h:'Habits',due:iso(0),p:0,done:false,time:'07:00'},
+  {id:6,t:'Go grocery shopping',doc:'Weekly plan',h:'Errands',due:iso(0),p:2,done:false,time:'09:00'},
+  {id:7,t:'Send invoice to client',doc:'Weekly plan',h:'Work',due:iso(0),p:3,done:false},
+  {id:8,t:'Book dentist',doc:'Home',h:'Admin',due:iso(1),p:1,done:false},
+  {id:9,t:'Prepare sprint demo',doc:'Meeting 2026-10-27',h:'Action items',due:iso(1),p:2,done:false,time:'14:00'},
+  {id:10,t:'Archive last year's reports',doc:'Project Kickoff',h:'Later',due:iso(4),p:0,done:false},
+  {id:11,t:'Plan weekend trip',doc:'Weekly plan',h:'Fun',due:iso(5),p:0,done:false},
+  {id:12,t:'Reply to Sam about the offsite',doc:'Meeting 2026-10-27',h:'Action items',due:null,p:2,done:false},
+  {id:13,t:'Pay electricity bill',doc:'Home',h:'Admin',due:iso(-1),p:0,done:true,doneOn:iso(-1)},
+  {id:14,t:'Take out the recycling',doc:'Home',h:'Admin',due:iso(0),p:0,done:true,doneOn:iso(0)},
+  {id:15,t:'Reply to landlord',doc:'Home',h:'Admin',due:iso(-3),p:0,done:true,doneOn:iso(-3)},
+]);
+let S = {mode:'desk', view:'inbox', tasks:seed(), sel:null, pop:null, toast:null, closed:{}, forceEmpty:false, sheet:null, next:100};
+const pri = ['None','Low','Medium','High'];
+const inboxOf = t => !t.due && !t.p;
+const keepDone = t => t.due ? off(t.due)>=0 : t.doneOn===iso(0);
+const doneLast = rows => rows.map((t,i)=>[t,i]).sort((a,b)=>(a[0].done-b[0].done)||a[1]-b[1]).map(x=>x[0]);
+const vis = () => S.forceEmpty ? [] : S.tasks;
+const counts = () => { const T=vis().filter(t=>!t.done);
+  return {inbox:T.filter(inboxOf).length, today:T.filter(t=>t.due&&off(t.due)<=0).length,
+    tomorrow:T.filter(t=>t.due&&off(t.due)==1).length, week:T.filter(t=>t.due&&off(t.due)<=6).length,
+    all:T.length, done:vis().filter(t=>t.done).length}; };
+const NAV = [['inbox','Inbox',I.inbox],['today','Today',I.today],['tomorrow','Tomorrow',I.tmr],['week','Next 7 Days',I.week]];
+const MORE = [['all','All tasks',I.all],['done','Completed',I.done]];
+const TITLE = {inbox:'Inbox',today:'Today',tomorrow:'Tomorrow',week:'Next 7 Days',all:'All tasks',done:'Completed'};
+const dayName = o => o==0?'Today':o==1?'Tomorrow':new Date(D0.getTime()+o*864e5).toLocaleDateString('en',{weekday:'long',month:'short',day:'numeric'});
+function groups(){
+  const T=vis(), v=S.view, A=T.filter(t=>!t.done||keepDone(t)), byDue=(a,b)=>(a.due||'z').localeCompare(b.due||'z')||b.p-a.p;
+  if(v=='inbox'){ const m={}; A.filter(inboxOf).forEach(t=>(m[t.doc]??=[]).push(t));
+    return Object.entries(m).map(([k,r])=>({k:'doc:'+k,name:k,rows:doneLast(r),doc:true})); }
+  if(v=='today'){ const od=A.filter(t=>t.due&&off(t.due)<0).sort(byDue), td=A.filter(t=>t.due&&off(t.due)==0).sort((a,b)=>(a.time||'99').localeCompare(b.time||'99')||b.p-a.p);
+    return [{k:'od',name:'Overdue',rows:od,od:1},{k:'td',name:'Today',rows:td}].filter(g=>g.rows.length); }
+  if(v=='tomorrow') return [{k:'tm',name:'Tomorrow',rows:A.filter(t=>t.due&&off(t.due)==1).sort((a,b)=>b.p-a.p)}].filter(g=>g.rows.length);
+  if(v=='week'){ const g=[]; const od=A.filter(t=>t.due&&off(t.due)<0); if(od.length) g.push({k:'od',name:'Overdue',rows:od,od:1});
+    for(let o=0;o<7;o++){ const r=A.filter(t=>t.due&&off(t.due)==o).sort((a,b)=>(a.time||'99').localeCompare(b.time||'99')||b.p-a.p); if(r.length) g.push({k:'d'+o,name:dayName(o),rows:r}); } return g; }
+  if(v=='all'){ const g=[]; const dated=A.filter(t=>t.due).sort(byDue), nod=A.filter(t=>!t.due&&t.p), inb=A.filter(inboxOf);
+    if(dated.length) g.push({k:'a1',name:'Scheduled',rows:dated}); if(nod.length) g.push({k:'a2',name:'No date (priority only)',rows:nod}); if(inb.length) g.push({k:'a3',name:'Inbox',rows:inb}); return g; }
+  const m={}; T.filter(t=>t.done).sort((a,b)=>b.doneOn.localeCompare(a.doneOn)).forEach(t=>(m[t.doneOn]??=[]).push(t));
+  return Object.entries(m).map(([d,r])=>({k:'c'+d,name:'Completed '+dayName(off(d)).replace(/^(Today|Tomorrow)$/,x=>x==='Today'?'today':x),rows:r}));
+}
+function dateLabel(t){ if(!t.due) return ''; const o=off(t.due); let s = o==0?'Today':o==1?'Tomorrow':o==-1?'Yesterday':o<0?`${-o}d ago`:new Date(t.due+'T00:00').toLocaleDateString('en',{weekday:'short',day:'numeric',month:'short'});
+  return `<span class="${o<0&&!t.done?'od':''}">${t.time&&o>=0&&o<=1?'':s}${t.time?(o>=0&&o<=1?'':' ')+t.time:''}</span>`; }
+const flag = p => p? `<span class="chip p${p}" style="padding:0;border:0"><svg class="flag" viewBox="0 0 24 24" style="color:var(--${['','blue','orange','red'][p]})"><path d="M6 21V4M6 5h12l-2 4 2 4H6"/></svg></span>`:'';
+function row(t){
+  const quick = S.view=='inbox' && !t.done ? `<span class="quick"><button class="ib" data-act="pop" data-id="${t.id}" title="Set date or priority">${I.cal}</button><button class="ib" data-act="pop" data-id="${t.id}" title="Set date or priority">${I.flag}</button></span>`:'';
+  const mobSrc = S.mode=='mob';
+  return `<div class="row ${t.done?'done':''} ${S.sel==t.id?'sel':''}" data-act="open" data-id="${t.id}">
+    <button class="cb p${t.p}" data-act="toggle" data-id="${t.id}" aria-label="Toggle"></button>
+    <div class="body"><div class="title">${t.t}</div>
+      ${t.doc==='Tasks'?`<div class="src" style="pointer-events:none">${I.plus}<span>Quick add</span></div>`:`<div class="src" data-act="src" data-id="${t.id}" title="Open in doc">${I.doc}<span>${t.doc} › ${t.h}</span></div>`}</div>
+    <div class="right">${quick}<span class="${quick?'hide-on-hover':''}" style="display:flex;gap:8px;align-items:center">${S.view=='done'?'<span>'+(t.due?'Due '+dayName(off(t.due)).split(',')[0]:'')+'</span>':dateLabel(t)}${flag(t.p)}</span></div></div>`; }
+function groupsHtml(){
+  const g = groups(); if(!g.length) return empty();
+  return g.map(x=>`<div class="grp ${S.closed[S.view+x.k]?'closed':''}"><div class="gh ${x.od?'od':''}" data-act="grp" data-k="${S.view+x.k}">${I.chev}${x.doc?I.doc:''}${x.name} <span class="n">${x.rows.length}</span></div><div class="rows">${x.rows.map(row).join('')}</div></div>`).join(''); }
+function empty(){
+  const E = {
+   inbox:[I.inbox,'Inbox zero','Every checkbox from your docs has a date or priority. New ones land here automatically.'],
+   today:[I.today,'Nothing due today','Enjoy it, or pull something in from the Inbox.'],
+   tomorrow:[I.tmr,'Nothing planned for tomorrow','Schedule tasks from the Inbox to see them here.'],
+   week:[I.week,'A clear week','No dated tasks in the next 7 days.'],
+   all:[I.all,'No tasks yet','Type "[ ]" in any doc to make a checkbox, or add one above.'],
+   done:[I.done,'No completed tasks','Checked tasks show up here.']}[S.view];
+  const none = S.forceEmpty;
+  const e = none ? [I.all,'No tasks yet','Type "[ ]" in any doc to make a checkbox, or add one above. Every TODO from every doc will show up here.'] : E;
+  return `<div class="empty">${e[0]}<h3>${e[1]}</h3><p>${e[2]}</p>${S.view=='inbox'&&!none?'':`<button class="btn" data-act="focusadd">Add a task</button>`}</div>`; }
+const titleHtml = (t,tag) => t.doc==='Tasks' ? `<input data-act="title" data-id="${t.id}" value="${t.t.replace(/"/g,'&quot;')}" style="width:100%;background:var(--panel);border:1px solid var(--line);border-radius:6px;color:var(--text);padding:6px 8px;font:inherit">` : `<h2>${t.t}</h2>`;
+function editor(t){
+  const quick=[['Today',0],['Tomorrow',1],['Next Monday',(8-D0.getDay())%7||7],['In a week',7]];
+  return `<div class="ed"><div><div class="lbl">Date</div><div class="chips">
+   ${quick.map(([n,o])=>`<button class="chip ${t.due==iso(o)?'on':''}" data-act="date" data-id="${t.id}" data-o="${o}">${n}</button>`).join('')}
+   <input type="date" value="${t.due||''}" data-act="datepick" data-id="${t.id}">
+   ${t.due?`<button class="chip" data-act="date" data-id="${t.id}" data-o="">Clear</button>`:''}</div></div>
+   <div><div class="lbl">Priority</div><div class="chips">
+   ${[3,2,1,0].map(p=>`<button class="chip p${p} ${t.p==p?'on':''}" data-act="prio" data-id="${t.id}" data-p="${p}">${p?I.flag:''}${pri[p]}</button>`).join('')}</div></div></div>`; }
+const get = id => S.tasks.find(t=>t.id==id);
+function addBar(){ const where = 'Adds to your Tasks doc';
+  return `<div class="add ${S.mode=='mob'?'m-add':''}">${I.plus}<input id="addin" placeholder="Add task" autocomplete="off"><span class="where">${S.mode=='mob'?'':where}</span></div>`; }
+function toastHtml(){ return S.toast?`<div class="toast"><span>${S.toast.msg}</span><button data-act="undo">Undo</button></div>`:''; }
+function sidebar(){ const it=(i,n,x)=>`<div class="mi ${x||''}">${i}${n}${x=='new'?'<span class="tag">NEW</span>':''}</div>`;
+  return `<div class="side"><div class="ws"><i></i>Private Workspace</div>
+   ${it(I.search,'Search')}${it(I.all,'All docs')}${it(I.jrn,'Journals')}${it(I.done,'Tasks','new active')}${it(I.bell,'Notifications')}${it(I.ai,'Intelligence')}${it(I.set,'Settings')}
+   <div class="sec">Favorites</div><div class="sec">Organize</div></div>`; }
+function deskHtml(){
+  const c=counts(), v=S.view, t=S.sel&&get(S.sel);
+  const nav = k=>`<button class="mi ${v==k[0]?'active':''}" data-act="nav" data-v="${k[0]}">${k[2]}${k[1]}${c[k[0]]?`<span class="cnt">${c[k[0]]}</span>`:''}</button>`;
+  const det = t?`<aside class="detail"><div><div class="lbl">Task</div>${titleHtml(t)}</div>${editor(t)}
+    ${t.doc==='Tasks'?'<div style="color:var(--text3);font-size:12px">Quick-add task. Edit the title here.</div>':`<div><div class="lbl">Source</div><div class="srcbox"><span>${I.doc} ${t.doc}</span><span style="color:var(--text3)">Under “${t.h}”</span><button class="open" data-act="src" data-id="${t.id}">Open in doc →</button></div></div>
+    <div style="color:var(--text3);font-size:12px">Title is edited in the doc (v1).</div>`}
+    ${t.done&&t.doneOn?`<div style="color:var(--text3);font-size:12px">Completed ${dayName(off(t.doneOn))}</div>`:''}</aside>`:'';
+  return `<div class="desk">${sidebar()}<div class="page"><nav class="nav">${NAV.map(nav).join('')}<div class="div"></div>${MORE.map(nav).join('')}</nav>
+   <section class="main"><div class="head"><h1>${TITLE[v]}</h1><span class="sp"></span><button class="ib" title="Group and sort">${I.sort}</button><button class="ib">${I.more}</button></div>
+   ${v=='done'?'':addBar()}<div class="list">${groupsHtml()}</div></section>${det}</div>
+   ${S.pop?`<div class="pop" style="left:${S.pop.x}px;top:${S.pop.y}px">${editor(get(S.pop.id))}</div>`:''}${toastHtml()}</div>`; }
+function mobHtml(){
+  const c=counts(), v=S.view, t=S.sheet&&get(S.sheet);
+  const chips=[...NAV,['all','All',''],['done','Done','']].map(k=>`<button class="chip ${v==k[0]?'on':''}" data-act="nav" data-v="${k[0]}">${k[1]}${k[0]=='done'?'':` <span class="cnt">${c[k[0]]||''}</span>`}</button>`).join('');
+  const tab=(i,on)=>`<button class="${on?'on':''}">${i}</button>`;
+  return `<div class="phone"><div class="m-head"><h1>${TITLE[v]}</h1><button class="ib">${I.sort}</button></div>
+   <div class="m-chips">${chips}</div><div class="list">${groupsHtml()}</div>
+   <button class="fab" data-act="mobadd">${I.plus}</button>
+   <div class="tabs">${tab(I.home)}${tab(I.jrn)}${tab(I.done,1)}${tab(I.plus)}</div>
+   ${S.sheet==='add'?`<div class="scrim" data-act="close"></div><div class="sheet"><h2>New task</h2><div class="sub">Lands in Inbox · saved to your Tasks doc</div>${addBar()}</div>`:''}
+   ${t?`<div class="scrim" data-act="close"></div><div class="sheet">${titleHtml(t)}<div class="sub" ${t.doc==='Tasks'?'':`data-act="src" data-id="${t.id}"`} style="color:${t.doc==='Tasks'?'var(--text3)':'var(--accent)'};margin-top:6px">${t.doc==='Tasks'?'Quick add':t.doc+' › '+t.h+' — open in doc'}</div>${editor(t)}</div>`:''}${toastHtml()}</div>`; }
+function render(keep){
+  const val = document.getElementById('addin')?.value||'';
+  document.getElementById('root').innerHTML = S.mode=='desk'?deskHtml():mobHtml();
+  const a=document.getElementById('addin'); if(a){a.value=val; if(keep)a.focus();}
+  document.getElementById('b-desk').classList.toggle('on',S.mode=='desk'); document.getElementById('b-mob').classList.toggle('on',S.mode=='mob');
+  document.getElementById('b-empty').textContent='Preview empty state: '+(S.forceEmpty?'on':'off');
+}
+let undo=null, tt;
+function toast(msg,fn){ S.toast={msg}; undo=fn; clearTimeout(tt); tt=setTimeout(()=>{S.toast=null;render()},5000); }
+function mutate(id,patch,msg){ const t=get(id), old={...t}; Object.assign(t,patch); S.pop=null; if(S.sheet&&S.sheet!=='add')S.sheet=null; toast(msg,()=>Object.assign(get(id),old)); render(); }
+document.addEventListener('click',e=>{
+  const el=e.target.closest('[data-act]'); const bar=e.target.closest('.bar');
+  if(!el){ if(S.pop&&!e.target.closest('.pop')){S.pop=null;render();} return; }
+  const a=el.dataset.act, id=+el.dataset.id; e.stopPropagation();
+  if(a=='toggle'){ const t=get(id); const nv=!t.done; mutate(id,{done:nv,doneOn:nv?iso(0):null},nv?'Completed. Source doc updated.':'Reopened.'); }
+  else if(a=='open'){ if(S.mode=='desk'){S.sel=id;S.pop=null;} else S.sheet=id; render(); }
+  else if(a=='pop'){ const r=el.getBoundingClientRect(), d=document.querySelector('.desk').getBoundingClientRect(); S.pop={id,x:Math.min(r.left-d.left-250,d.width-310),y:Math.min(r.bottom-d.top+6,d.height-260)}; render(); }
+  else if(a=='date'){ const o=el.dataset.o; const t=get(id); const was=inboxOf(t); const due=o===''?null:iso(+o);
+    mutate(id,{due},due?`Scheduled for ${dayName(+o)}${was?' · left Inbox':''}.`:'Date cleared.'); }
+  else if(a=='prio'){ const t=get(id); const was=inboxOf(t); const p=+el.dataset.p; mutate(id,{p},`Priority: ${pri[p]}${was&&p?' · left Inbox':''}.`); }
+  else if(a=='nav'){ S.view=el.dataset.v; S.sel=null; S.pop=null; render(); }
+  else if(a=='grp'){ S.closed[el.dataset.k]=!S.closed[el.dataset.k]; render(); }
+  else if(a=='src'){ const t=get(id); S.toast={msg:`Would open “${t.doc}” scrolled to the block`}; undo=null; clearTimeout(tt); tt=setTimeout(()=>{S.toast=null;render()},2500); render(); }
+  else if(a=='undo'){ undo&&undo(); S.toast=null; render(); }
+  else if(a=='focusadd'){ document.getElementById('addin')?.focus(); }
+  else if(a=='mobadd'){ S.sheet='add'; render(true); document.getElementById('addin')?.focus(); }
+  else if(a=='close'){ S.sheet=null; render(); }
+});
+document.addEventListener('keydown',e=>{
+  if(e.target.id=='addin'&&e.key=='Enter'&&e.target.value.trim()){
+    const t={id:S.next++,t:e.target.value.trim(),doc:'Tasks',h:'Inbox',due:null,p:0,done:false};
+    S.tasks.unshift(t); e.target.value=''; S.sheet=null; if(S.view!=='inbox'&&S.view!=='all'){S.view='inbox';}
+    toast('Added to Inbox.',()=>{S.tasks=S.tasks.filter(x=>x!==t)}); render(S.mode=='desk'); }
+  if(e.key=='Escape'){S.pop=null;S.sheet=null;render();}
+});
+document.addEventListener('change',e=>{ const el=e.target; if(el.dataset.act=='title'){ get(+el.dataset.id).t=el.value; return; } if(el.dataset.act=='datepick'&&el.value){ const o=off(el.value); mutate(+el.dataset.id,{due:el.value},`Scheduled for ${dayName(o)}.`);} });
+document.getElementById('b-desk').onclick=()=>{S.mode='desk';S.sheet=null;render()};
+document.getElementById('b-mob').onclick=()=>{S.mode='mob';S.sel=null;S.pop=null;render()};
+document.getElementById('b-reset').onclick=()=>{S.tasks=seed();S.sel=null;S.pop=null;S.sheet=null;S.toast=null;render()};
+document.getElementById('b-empty').onclick=()=>{S.forceEmpty=!S.forceEmpty;render()};
+render();
+</script>
+</body>
+</html>

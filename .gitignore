@@ -50,6 +50,7 @@ testem.log
 tsconfig.tsbuildinfo
 .context
 /*.md
+!/AGENTS.md
 .codex
 .cursor
 
