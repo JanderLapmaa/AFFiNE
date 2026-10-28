@@ -320,6 +320,14 @@ export const AFFINE_FLAGS = {
     configurable: true,
     defaultState: false,
   },
+  enable_tasks_view: {
+    category: 'affine',
+    displayName: 'Enable Tasks View',
+    description:
+      'Collect checkbox TODOs from every doc in the Tasks view (Inbox, Today, Tomorrow, Next 7 Days).',
+    configurable: true,
+    defaultState: true,
+  },
 } satisfies { [key in string]: FlagInfo };
 
 // oxlint-disable-next-line no-redeclare

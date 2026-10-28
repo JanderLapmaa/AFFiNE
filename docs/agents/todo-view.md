@@ -60,3 +60,25 @@ Checked by `blocksuite/affine/all/src/__tests__/list/list-todo-roundtrip.unit.sp
 4. **Reminders (optional, server-side).** `packages/backend/server/src/core/notification/`
    (service + job queue) and `plugins/calendar/` (an existing cron) are the
    references. New API goes in `schema.gql` / `packages/common/graphql`.
+
+## Tasks module (`modules/tasks/`)
+
+The UI talks only to `TasksService` (workspace scope), behind the
+`enable_tasks_view` feature flag (on by default; the UI and routes check it).
+
+- Read: `view$(viewId)` → ordered `TaskGroup[]` (group kind + date/docId +
+  rows; labels are the UI's job), `counts$` (unchecked per view;
+  `completed` = checked count), `inboxCount$` (badge), `state$`
+  (`loading | ready | error`), `retry()` (re-runs the query; the indexer
+  retries itself every 5s and has no restart hook).
+- Write: `setDue`, `setPriority`, `toggle` resolve to an undo token once the
+  doc write finishes; `undo(token)` only reverts if that token is still the
+  latest change (so a stale toast can't undo another task). Writes to a
+  trashed or missing doc reject.
+- Changes show at once through an optimistic overlay, dropped when the index
+  reflects the write (60s safety timeout).
+- Pure rules live in `projection.ts` and `date.ts`; the clock is the
+  injectable `TasksClockStore`. Tests: `__tests__/tasks-service.spec.ts`
+  (Seam 1, built through `Framework`).
+- `TaskRow.quickAdd` is always `false` until phase 6 marks rows from the
+  hidden Tasks doc.

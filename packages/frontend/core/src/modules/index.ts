@@ -60,6 +60,7 @@ import {
 } from './storage';
 import { configureSystemFontFamilyModule } from './system-font-family';
 import { configureTagModule } from './tag';
+import { configureTasksModule } from './tasks';
 import { configureTelemetryModule } from './telemetry';
 import { configureTemplateDocModule } from './template-doc';
 import { configureAppThemeModule } from './theme';
@@ -108,6 +109,7 @@ export function configureCommonModules(framework: Framework) {
   configureUserspaceModule(framework);
   configureAppSidebarModule(framework);
   configureJournalModule(framework);
+  configureTasksModule(framework);
   configureUrlModule(framework);
   configureAppThemeModule(framework);
   configureDialogModule(framework);

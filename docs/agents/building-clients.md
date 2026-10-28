@@ -42,3 +42,8 @@ used in place of `ghcr.io/toeverything/affine:stable` in
   single-threaded too. Treat them as pre-existing, not as regressions.
 - Don't run vitest while cargo is building: Vite's watcher crashes with
   `EBUSY` on files under `target/`.
+- `vitest run packages/frontend/core` has four spec files that fail on Windows
+  on an unmodified checkout: `src/__tests__/share-page.spec.ts` (Vite "Denied
+  ID" on a template sticker path with `~`), the mermaid and typst
+  `*-preview.integration.spec.ts` (Playwright browser not installed) and
+  `src/utils/__tests__/first-app-data.spec.ts` (`localStorage` undefined).
