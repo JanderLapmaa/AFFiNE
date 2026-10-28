@@ -45,6 +45,13 @@ export interface BlockDocumentInfo {
     databaseName?: string;
     displayMode?: string;
     noteBlockId?: string;
+    // task fields, only on todo list blocks (see docs/agents/indexer.md)
+    listType?: 'todo';
+    checked?: boolean;
+    due?: string;
+    priority?: 1 | 2 | 3;
+    completedAt?: number;
+    heading?: string;
   };
   yblock: YMap<any>;
   markdownPreview?: string;
@@ -510,6 +517,80 @@ function unindentMarkdown(markdown: string) {
   return res.join('\n');
 }
 
+const DUE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const HEADING_TYPES = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+
+/**
+ * Pre-order walk from the page block over `sys:children`; maps each todo list
+ * block id to the trimmed text of the last heading visited before it. Kept
+ * independent of the reader's own traversal order.
+ */
+function collectTodoHeadings(blocks: YMap<YMap<any>>): Map<string, string> {
+  const result = new Map<string, string>();
+  // several pages: the walk starts from the lowest sys:id (string order),
+  // independent of the page the reader itself treats as root
+  let pageId: string | null = null;
+  for (const block of blocks.values()) {
+    const id = block.get('sys:id')?.toString();
+    if (
+      block.get('sys:flavour')?.toString() === 'affine:page' &&
+      id &&
+      (pageId === null || id < pageId)
+    ) {
+      pageId = id;
+    }
+  }
+  const visited = new Set<string>();
+  const stack = pageId ? [pageId] : [];
+  let heading = '';
+  while (stack.length) {
+    const id = stack.pop() as string;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    const block = blocks.get(id);
+    if (!block) continue;
+    const flavour = block.get('sys:flavour')?.toString();
+    if (
+      flavour === 'affine:paragraph' &&
+      HEADING_TYPES.has(block.get('prop:type'))
+    ) {
+      heading = (block.get('prop:text')?.toString() ?? '').trim();
+    } else if (
+      flavour === 'affine:list' &&
+      block.get('prop:type') === 'todo' &&
+      heading
+    ) {
+      result.set(id, heading);
+    }
+    const children = block.get('sys:children');
+    if (children instanceof YArray) {
+      for (let i = children.length - 1; i >= 0; i--) {
+        stack.push(children.get(i));
+      }
+    }
+  }
+  return result;
+}
+
+function readTaskFields(
+  block: YMap<any>,
+  heading: string | undefined
+): NonNullable<BlockDocumentInfo['additional']> {
+  const due = block.get('prop:due');
+  const priority = block.get('prop:priority');
+  const completedAt = block.get('prop:completedAt');
+  return {
+    listType: 'todo',
+    checked: block.get('prop:checked') === true,
+    ...(typeof due === 'string' && DUE_PATTERN.test(due) ? { due } : {}),
+    ...(priority === 1 || priority === 2 || priority === 3 ? { priority } : {}),
+    ...(typeof completedAt === 'number' && Number.isFinite(completedAt)
+      ? { completedAt }
+      : {}),
+    ...(heading ? { heading } : {}),
+  };
+}
+
 export async function readAllBlocksFromDoc({
   ydoc,
   rootYDoc,
@@ -587,6 +668,8 @@ export async function readAllBlocksFromDoc({
   if (!rootBlockId) {
     return undefined;
   }
+
+  const todoHeadings = collectTodoHeadings(blocks);
 
   const queue: { parent?: string; id: string }[] = [{ id: rootBlockId }];
   const visited = new Set<string>(); // avoid loop
@@ -682,7 +765,13 @@ export async function readAllBlocksFromDoc({
         ),
         parentFlavour,
         parentBlockId,
-        additional: { ...commonBlockProps.additional, databaseName },
+        additional: {
+          ...commonBlockProps.additional,
+          databaseName,
+          ...(flavour === 'affine:list' && block.get('prop:type') === 'todo'
+            ? readTaskFields(block, todoHeadings.get(blockId))
+            : {}),
+        },
       });
 
       if (maxSummaryLength > 0) {

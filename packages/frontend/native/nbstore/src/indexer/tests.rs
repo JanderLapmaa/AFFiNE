@@ -1,19 +1,23 @@
 use std::path::{Path, PathBuf};
 
-use affine_doc_loader::ParseError;
+use affine_doc_loader::{ParseError, parse_doc_from_binary};
 use assert_json_diff::assert_json_eq;
 use chrono::Utc;
 use serde_json::Value;
 use tokio::fs;
 use uuid::Uuid;
+use y_octo::{Any, Doc, DocOptions, Map};
 
 use super::{
   super::{DocIndexedClock, error::Error, storage::SqliteDocStorage},
-  NativeIndexDocument, NativeIndexField, NativeIndexQuery, NativeIndexSearchOptions,
+  NativeCrawlResult, NativeIndexDocument, NativeIndexField, NativeIndexQuery, NativeIndexSearchOptions,
+  task_fields::collect_task_fields,
 };
 
 const DEMO_BIN: &[u8] = include_bytes!("../../../../../common/native/fixtures/demo.ydoc");
 const DEMO_JSON: &[u8] = include_bytes!("../../../../../common/native/fixtures/demo.ydoc.json");
+const TASKS_BIN: &[u8] = include_bytes!("../../../../../common/native/fixtures/tasks.ydoc");
+const TASKS_JSON: &[u8] = include_bytes!("../../../../../common/native/fixtures/tasks.ydoc.expected.json");
 
 fn temp_workspace_dir() -> PathBuf {
   std::env::temp_dir().join(format!("affine-native-{}", Uuid::new_v4()))
@@ -315,4 +319,371 @@ async fn failed_atomic_commit_keeps_index_dirty_and_clock_unadvanced() {
   assert!(storage.get_doc_indexed_clock("doc-1".into()).await.unwrap().is_none());
   storage.close().await;
   cleanup(&db_path).await;
+}
+
+const TASK_KEYS: [&str; 6] = ["listType", "checked", "due", "priority", "completedAt", "heading"];
+
+async fn crawl_snapshot(bin: &[u8]) -> NativeCrawlResult {
+  let db_path = temp_workspace_dir().join("storage.db");
+  let storage = init_db(&db_path).await;
+  sqlx::query(r#"INSERT INTO snapshots (doc_id, data, updated_at) VALUES (?, ?, ?)"#)
+    .bind("task-doc")
+    .bind(bin)
+    .bind(Utc::now().naive_utc())
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+  let result = storage.crawl_doc_data("task-doc").await.unwrap();
+  storage.close().await;
+  cleanup(&db_path).await;
+  result
+}
+
+/// The parsed `additional` JSON of a block; `Null` when the block has no row or no additional.
+fn additional_of(result: &NativeCrawlResult, block_id: &str) -> Value {
+  let additional = result
+    .blocks
+    .iter()
+    .find(|block| block.block_id == block_id)
+    .and_then(|block| block.additional.as_deref());
+  match additional {
+    Some(additional) => serde_json::from_str(additional).unwrap(),
+    None => Value::Null,
+  }
+}
+
+/// Only the task keys of a block's `additional` JSON.
+fn task_keys_of(result: &NativeCrawlResult, block_id: &str) -> Value {
+  let additional = additional_of(result, block_id);
+  let mut fields = serde_json::Map::new();
+  if let Some(object) = additional.as_object() {
+    for key in TASK_KEYS {
+      if let Some(value) = object.get(key) {
+        fields.insert(key.to_string(), value.clone());
+      }
+    }
+  }
+  Value::Object(fields)
+}
+
+fn add_block(doc: &Doc, blocks: &mut Map, id: &str, flavour: &str, children: &[&str], props: Vec<(&str, Any)>) {
+  blocks.insert(id.to_string(), doc.create_map().unwrap()).unwrap();
+  let mut block = blocks.get(id).unwrap().to_map().unwrap();
+  block.insert("sys:id".to_string(), id).unwrap();
+  block.insert("sys:flavour".to_string(), flavour).unwrap();
+  block
+    .insert("sys:children".to_string(), doc.create_array().unwrap())
+    .unwrap();
+  let mut array = block.get("sys:children").unwrap().to_array().unwrap();
+  for child in children {
+    array.push(*child).unwrap();
+  }
+  for (key, value) in props {
+    block.insert(key.to_string(), value).unwrap();
+  }
+}
+
+fn add_text(doc: &Doc, blocks: &Map, id: &str, text: &str) {
+  let mut block = blocks.get(id).unwrap().to_map().unwrap();
+  block
+    .insert("prop:text".to_string(), doc.create_text().unwrap())
+    .unwrap();
+  let mut prop = block.get("prop:text").unwrap().to_text().unwrap();
+  prop.insert(0, text).unwrap();
+}
+
+fn s(value: &str) -> Any {
+  Any::String(value.to_string())
+}
+
+fn todo() -> (&'static str, Any) {
+  ("prop:type", s("todo"))
+}
+
+fn build_task_doc() -> Vec<u8> {
+  let doc = DocOptions::new().build();
+  let mut blocks = doc.get_or_create_map("blocks").unwrap();
+  add_block(&doc, &mut blocks, "page", "affine:page", &["n1", "n2"], vec![]);
+  let note1 = [
+    "t-plain",
+    "h1",
+    "t-checked",
+    "t-due",
+    "t-p0",
+    "t-bad-due",
+    "bullet",
+    "t-parent",
+  ];
+  add_block(
+    &doc,
+    &mut blocks,
+    "n1",
+    "affine:note",
+    &note1,
+    vec![("prop:displayMode", s("both"))],
+  );
+  add_block(
+    &doc,
+    &mut blocks,
+    "n2",
+    "affine:note",
+    &["h2", "t-second", "t-notext"],
+    vec![],
+  );
+  // a todo before any heading
+  add_block(&doc, &mut blocks, "t-plain", "affine:list", &[], vec![todo()]);
+  add_block(
+    &doc,
+    &mut blocks,
+    "h1",
+    "affine:paragraph",
+    &[],
+    vec![("prop:type", s("h1"))],
+  );
+  add_text(&doc, &blocks, "h1", "  Alpha  ");
+  let checked = vec![
+    todo(),
+    ("prop:checked", Any::True),
+    ("prop:completedAt", Any::from(1_767_225_600_000_i64)),
+  ];
+  add_block(&doc, &mut blocks, "t-checked", "affine:list", &[], checked);
+  let due = vec![todo(), ("prop:due", s("2026-01-05")), ("prop:priority", Any::from(3))];
+  add_block(&doc, &mut blocks, "t-due", "affine:list", &[], due);
+  let p0 = vec![todo(), ("prop:priority", Any::from(0))];
+  add_block(&doc, &mut blocks, "t-p0", "affine:list", &[], p0);
+  let bad = vec![todo(), ("prop:due", s("2026-1-5")), ("prop:priority", Any::from(4))];
+  add_block(&doc, &mut blocks, "t-bad-due", "affine:list", &[], bad);
+  let bullet = vec![("prop:type", s("bulleted"))];
+  add_block(&doc, &mut blocks, "bullet", "affine:list", &[], bullet);
+  // a nested todo
+  add_block(
+    &doc,
+    &mut blocks,
+    "t-parent",
+    "affine:list",
+    &["t-nested"],
+    vec![todo()],
+  );
+  let nested = vec![todo(), ("prop:due", s("2026-02-01"))];
+  add_block(&doc, &mut blocks, "t-nested", "affine:list", &[], nested);
+  add_block(
+    &doc,
+    &mut blocks,
+    "h2",
+    "affine:paragraph",
+    &[],
+    vec![("prop:type", s("h2"))],
+  );
+  add_text(&doc, &blocks, "h2", "Beta");
+  add_block(&doc, &mut blocks, "t-second", "affine:list", &[], vec![todo()]);
+  add_block(&doc, &mut blocks, "t-notext", "affine:list", &[], vec![todo()]);
+  // The external parser only emits list blocks that have a text prop.
+  let texted = [
+    "t-plain",
+    "t-checked",
+    "t-due",
+    "t-p0",
+    "t-bad-due",
+    "bullet",
+    "t-parent",
+    "t-nested",
+    "t-second",
+  ];
+  for id in texted {
+    add_text(&doc, &blocks, id, id);
+  }
+  doc.encode_update_v1().unwrap()
+}
+
+#[tokio::test]
+async fn crawl_adds_task_fields_to_todo_blocks() {
+  let bin = build_task_doc();
+  let result = crawl_snapshot(&bin).await;
+
+  // Keys written by the external parser are preserved.
+  let raw = parse_doc_from_binary(bin.clone(), "task-doc".to_string()).unwrap();
+  for block in &raw.blocks {
+    let merged = additional_of(&result, &block.block_id);
+    if let Some(Ok(Value::Object(original))) = block.additional.as_deref().map(serde_json::from_str::<Value>) {
+      for (key, value) in original {
+        assert_eq!(merged[&key], value, "{} key {key}", block.block_id);
+      }
+    }
+  }
+
+  let task = |id: &str| task_keys_of(&result, id);
+
+  assert_eq!(
+    task("t-plain"),
+    serde_json::json!({"listType": "todo", "checked": false})
+  );
+  assert_eq!(
+    task("t-checked"),
+    serde_json::json!({
+      "listType": "todo", "checked": true, "completedAt": 1_767_225_600_000_i64, "heading": "Alpha"
+    })
+  );
+  // Integers stay integers in the JSON string (`3`, not `3.0`).
+  let due_block = result.blocks.iter().find(|b| b.block_id == "t-due").unwrap();
+  assert!(due_block.additional.as_deref().unwrap().contains("\"priority\":3"));
+  let checked_block = result.blocks.iter().find(|b| b.block_id == "t-checked").unwrap();
+  assert!(
+    checked_block
+      .additional
+      .as_deref()
+      .unwrap()
+      .contains("\"completedAt\":1767225600000")
+  );
+  assert_eq!(
+    task("t-due"),
+    serde_json::json!({
+      "listType": "todo", "checked": false, "due": "2026-01-05", "priority": 3, "heading": "Alpha"
+    })
+  );
+  // priority 0 is omitted.
+  assert_eq!(
+    task("t-p0"),
+    serde_json::json!({"listType": "todo", "checked": false, "heading": "Alpha"})
+  );
+  // A malformed due and an out-of-range priority are omitted.
+  assert_eq!(
+    task("t-bad-due"),
+    serde_json::json!({"listType": "todo", "checked": false, "heading": "Alpha"})
+  );
+  // Bulleted lists and other blocks carry no task keys.
+  for id in ["bullet", "h1", "n1", "page"] {
+    assert!(task(id).as_object().unwrap().is_empty(), "{id}");
+  }
+  // A todo without a text prop is not emitted by the external parser, so it has no row.
+  assert!(result.blocks.iter().all(|block| block.block_id != "t-notext"));
+  // Nested todos follow their parent in pre-order, under the same heading.
+  assert_eq!(
+    task("t-parent"),
+    serde_json::json!({"listType": "todo", "checked": false, "heading": "Alpha"})
+  );
+  assert_eq!(
+    task("t-nested"),
+    serde_json::json!({"listType": "todo", "checked": false, "due": "2026-02-01", "heading": "Alpha"})
+  );
+  // The heading carries across notes until a later heading replaces it.
+  assert_eq!(
+    task("t-second"),
+    serde_json::json!({"listType": "todo", "checked": false, "heading": "Beta"})
+  );
+}
+
+#[tokio::test]
+async fn crawl_task_fields_match_shared_fixture() {
+  let result = crawl_snapshot(TASKS_BIN).await;
+  let expected: Value = serde_json::from_slice(TASKS_JSON).unwrap();
+  let expected = expected.as_object().unwrap();
+  for (block_id, fields) in expected {
+    let actual = task_keys_of(&result, block_id);
+    assert_eq!(&actual, fields, "{block_id}");
+  }
+  for block in &result.blocks {
+    if !expected.contains_key(&block.block_id) {
+      assert!(task_keys_of(&result, &block.block_id).as_object().unwrap().is_empty());
+    }
+  }
+}
+
+#[test]
+fn task_fields_start_from_the_lowest_page_id() {
+  let doc = DocOptions::new().build();
+  let mut blocks = doc.get_or_create_map("blocks").unwrap();
+  // Inserted in reverse so that map order cannot decide the result.
+  add_block(&doc, &mut blocks, "page-b", "affine:page", &["note-b"], vec![]);
+  add_block(&doc, &mut blocks, "note-b", "affine:note", &["h-b", "t-b"], vec![]);
+  add_block(
+    &doc,
+    &mut blocks,
+    "h-b",
+    "affine:paragraph",
+    &[],
+    vec![("prop:type", s("h1"))],
+  );
+  add_text(&doc, &blocks, "h-b", "B");
+  add_block(&doc, &mut blocks, "t-b", "affine:list", &[], vec![todo()]);
+  add_block(&doc, &mut blocks, "page-a", "affine:page", &["note-a"], vec![]);
+  add_block(&doc, &mut blocks, "note-a", "affine:note", &["h-a", "t-a"], vec![]);
+  add_block(
+    &doc,
+    &mut blocks,
+    "h-a",
+    "affine:paragraph",
+    &[],
+    vec![("prop:type", s("h1"))],
+  );
+  add_text(&doc, &blocks, "h-a", "A");
+  add_block(&doc, &mut blocks, "t-a", "affine:list", &[], vec![todo()]);
+
+  let fields = collect_task_fields(&doc.encode_update_v1().unwrap()).unwrap();
+  assert_eq!(fields["t-a"]["heading"], "A");
+  // Not reachable from the chosen page: other fields only.
+  assert!(fields["t-b"].get("heading").is_none());
+  assert_eq!(fields["t-b"]["listType"], "todo");
+}
+
+#[test]
+fn task_fields_survive_a_very_deep_tree() {
+  const DEPTH: usize = 10_000;
+  let doc = DocOptions::new().build();
+  let mut blocks = doc.get_or_create_map("blocks").unwrap();
+  add_block(&doc, &mut blocks, "page", "affine:page", &["note"], vec![]);
+  add_block(&doc, &mut blocks, "note", "affine:note", &["h", "l0"], vec![]);
+  add_block(
+    &doc,
+    &mut blocks,
+    "h",
+    "affine:paragraph",
+    &[],
+    vec![("prop:type", s("h1"))],
+  );
+  add_text(&doc, &blocks, "h", "Deep");
+  for level in 0..DEPTH {
+    let id = format!("l{level}");
+    let child = format!("l{}", level + 1);
+    let children: Vec<&str> = if level + 1 < DEPTH {
+      vec![child.as_str()]
+    } else {
+      vec![]
+    };
+    add_block(&doc, &mut blocks, &id, "affine:list", &children, vec![todo()]);
+  }
+
+  let fields = collect_task_fields(&doc.encode_update_v1().unwrap()).unwrap();
+  assert_eq!(fields.len(), DEPTH);
+  assert_eq!(fields[&format!("l{}", DEPTH - 1)]["heading"], "Deep");
+}
+
+#[test]
+fn heading_trim_matches_js_whitespace() {
+  let doc = DocOptions::new().build();
+  let mut blocks = doc.get_or_create_map("blocks").unwrap();
+  let note = ["h-bom", "t-bom", "h-nel", "t-nel", "h-mixed", "t-mixed"];
+  add_block(&doc, &mut blocks, "page", "affine:page", &["note"], vec![]);
+  add_block(&doc, &mut blocks, "note", "affine:note", &note, vec![]);
+  for (heading, todo_id, text) in [
+    ("h-bom", "t-bom", "\u{feff}"),
+    ("h-nel", "t-nel", "\u{85}"),
+    ("h-mixed", "t-mixed", "\u{a0}\u{feff} Mixed\u{85} \u{3000}"),
+  ] {
+    add_block(
+      &doc,
+      &mut blocks,
+      heading,
+      "affine:paragraph",
+      &[],
+      vec![("prop:type", s("h2"))],
+    );
+    add_text(&doc, &blocks, heading, text);
+    add_block(&doc, &mut blocks, todo_id, "affine:list", &[], vec![todo()]);
+  }
+
+  let fields = collect_task_fields(&doc.encode_update_v1().unwrap()).unwrap();
+  // U+FEFF is trimmed (whitespace-only heading, so no key); U+0085 is not.
+  assert!(fields["t-bom"].get("heading").is_none());
+  assert_eq!(fields["t-nel"]["heading"], "\u{85}");
+  assert_eq!(fields["t-mixed"]["heading"], "Mixed\u{85}");
 }

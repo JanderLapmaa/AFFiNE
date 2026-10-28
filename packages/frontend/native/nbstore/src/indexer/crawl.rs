@@ -1,12 +1,22 @@
 use affine_doc_loader::{ParseError, parse_doc_from_binary};
 use y_octo::merge_updates_v1;
 
-use super::{NativeCrawlResult, SqliteDocStorage, error::Result};
+use super::{
+  NativeCrawlResult, SqliteDocStorage,
+  error::Result,
+  task_fields::{collect_task_fields, merge_task_fields},
+};
 
 impl SqliteDocStorage {
   pub async fn crawl_doc_data(&self, doc_id: &str) -> Result<NativeCrawlResult> {
     let doc_bin = self.load_doc_binary(doc_id).await?.ok_or(ParseError::DocNotFound)?;
-    Ok(parse_doc_from_binary(doc_bin, doc_id.to_string())?.into())
+    // Collect from the borrowed binary first, then move it into the parser.
+    let task_fields = collect_task_fields(&doc_bin);
+    let mut result: NativeCrawlResult = parse_doc_from_binary(doc_bin, doc_id.to_string())?.into();
+    if let Some(task_fields) = task_fields {
+      merge_task_fields(&task_fields, &mut result.blocks);
+    }
+    Ok(result)
   }
 
   async fn load_doc_binary(&self, doc_id: &str) -> Result<Option<Vec<u8>>> {

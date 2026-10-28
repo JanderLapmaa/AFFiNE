@@ -1,0 +1,77 @@
+{
+  "t-before-heading": {
+    "listType": "todo",
+    "checked": false
+  },
+  "t-under-h1-checked": {
+    "listType": "todo",
+    "checked": true,
+    "completedAt": 1767225600000,
+    "heading": "Alpha"
+  },
+  "t-due-priority": {
+    "listType": "todo",
+    "checked": false,
+    "due": "2026-01-05",
+    "priority": 3,
+    "heading": "Alpha"
+  },
+  "t-priority-zero": {
+    "listType": "todo",
+    "checked": false,
+    "heading": "Alpha"
+  },
+  "t-bad-due": {
+    "listType": "todo",
+    "checked": false,
+    "heading": "Alpha"
+  },
+  "t-bad-priority": {
+    "listType": "todo",
+    "checked": false,
+    "heading": "Alpha"
+  },
+  "t-out-of-range": {
+    "listType": "todo",
+    "checked": false,
+    "heading": "Alpha"
+  },
+  "t-stale-completed": {
+    "listType": "todo",
+    "checked": false,
+    "completedAt": 1767225600000,
+    "heading": "Alpha"
+  },
+  "t-under-h2": {
+    "listType": "todo",
+    "checked": false,
+    "heading": "Beta"
+  },
+  "t-nested": {
+    "listType": "todo",
+    "checked": false,
+    "due": "2026-02-01",
+    "heading": "Beta"
+  },
+  "t-under-blank-heading": {
+    "listType": "todo",
+    "checked": false
+  },
+  "t-second-note": {
+    "listType": "todo",
+    "checked": false
+  },
+  "t-bigint": {
+    "listType": "todo",
+    "checked": false
+  },
+  "t-under-bom": {
+    "listType": "todo",
+    "checked": false
+  },
+  "t-under-nel": {
+    "listType": "todo",
+    "checked": false,
+    "heading": ""
+  }
+}

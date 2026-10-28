@@ -2,6 +2,7 @@ mod crawl;
 mod dto;
 mod persistence;
 mod table;
+mod task_fields;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -16,7 +17,7 @@ pub(super) use table::{TableIndex, string_values};
 
 pub(super) use super::{DocIndexedClock, error, storage::SqliteDocStorage};
 
-const NBSTORE_INDEXER_VERSION: u32 = 7;
+const NBSTORE_INDEXER_VERSION: u32 = 8;
 
 pub struct IndexManager {
   pub(super) doc: TableIndex,

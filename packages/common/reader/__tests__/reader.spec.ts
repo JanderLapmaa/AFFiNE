@@ -242,3 +242,91 @@ test('should index references from database rich-text cells', async () => {
     JSON.stringify({ docId: 'target-doc', mode: 'page' }),
   ]);
 });
+
+const TASK_KEYS = [
+  'listType',
+  'checked',
+  'due',
+  'priority',
+  'completedAt',
+  'heading',
+] as const;
+
+test('should read task fields from todo list blocks', async () => {
+  const fixtures = path.join(
+    import.meta.dirname,
+    '../../native/fixtures/tasks.ydoc'
+  );
+  const ydoc = new YDoc({ guid: 'tasks-fixture' });
+  applyUpdate(ydoc, readFileSync(fixtures));
+  const expected = JSON.parse(
+    readFileSync(`${fixtures}.expected.json`, 'utf8')
+  );
+
+  const result = await readAllBlocksFromDoc({ ydoc, spaceId: 'test-space' });
+  expect(result).toBeDefined();
+
+  const actual: Record<string, unknown> = {};
+  for (const block of result!.blocks) {
+    const additional: Record<string, unknown> = block.additional ?? {};
+    const picked = Object.fromEntries(
+      TASK_KEYS.filter(k => k in additional).map(k => [k, additional[k]])
+    );
+    if (additional.listType === 'todo') {
+      actual[block.blockId] = picked;
+    } else {
+      // non-todo blocks carry none of the task keys
+      expect(picked, block.blockId).toEqual({});
+    }
+    // existing keys are unchanged
+    if (block.blockId.startsWith('t-')) {
+      expect(additional.displayMode).toBe('page');
+      expect(additional.noteBlockId).toMatch(/^note-/);
+    }
+  }
+
+  expect(actual).toEqual(expected);
+});
+
+test('should start the task heading walk from the lowest page id', async () => {
+  const ydoc = new YDoc({ guid: 'multi-page' });
+  const blocks = ydoc.getMap<YMap<unknown>>('blocks');
+  const add = (
+    id: string,
+    flavour: string,
+    props: Record<string, unknown>,
+    children: string[],
+    text?: string
+  ) => {
+    const block = new YMap<unknown>();
+    blocks.set(id, block);
+    block.set('sys:id', id);
+    block.set('sys:flavour', flavour);
+    block.set('sys:children', YArray.from(children));
+    for (const [k, v] of Object.entries(props)) block.set(`prop:${k}`, v);
+    if (text !== undefined) {
+      block.set(
+        flavour === 'affine:page' ? 'prop:title' : 'prop:text',
+        new YText(text)
+      );
+    }
+  };
+  // the page with the higher id is inserted last
+  add('page-a', 'affine:page', {}, ['note-a'], 'A');
+  add('note-a', 'affine:note', {}, ['h-a', 'todo-a']);
+  add('h-a', 'affine:paragraph', { type: 'h1' }, [], 'From A');
+  add('todo-a', 'affine:list', { type: 'todo' }, [], 'a');
+  add('page-b', 'affine:page', {}, ['note-b'], 'B');
+  add('note-b', 'affine:note', {}, ['h-b', 'todo-b']);
+  add('h-b', 'affine:paragraph', { type: 'h1' }, [], 'From B');
+  add('todo-b', 'affine:list', { type: 'todo' }, [], 'b');
+
+  const result = await readAllBlocksFromDoc({ ydoc, spaceId: 'test-space' });
+  // the reader's own root is still the last page found (page-b)
+  expect(result!.title).toBe('B');
+  const todoB = result!.blocks.find(b => b.blockId === 'todo-b');
+  expect(todoB).toBeDefined();
+  // the heading walk starts from the lowest-id page (page-a), which does not
+  // reach todo-b, so no heading even though h-b sits above it under page-b
+  expect(todoB?.additional).not.toHaveProperty('heading');
+});
