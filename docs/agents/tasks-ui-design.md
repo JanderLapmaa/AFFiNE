@@ -15,10 +15,10 @@ browser; desktop and Android layouts, clickable). Background:
 
 ## Entry points
 
-| Platform | Placement |
-| --- | --- |
-| Desktop | `Tasks` menu item directly below `Journals` in `components/root-app-sidebar/index.tsx` (new `TasksButton` next to `AppSidebarJournalButton`). Shows the Inbox count as a small badge when > 0. Route `/tasks`. |
-| Android | New tab `tasks` in `mobile/components/app-tabs/data.tsx` that **replaces the `all` (All docs) tab** (order: home, journal, **tasks**, new). Route `/tasks`. Badge dot when Inbox > 0. All docs must stay reachable another way (home screen or search); check this when implementing. |
+| Platform | Placement                                                                                                                                                                                                                                                                             |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Desktop  | `Tasks` menu item directly below `Journals` in `components/root-app-sidebar/index.tsx` (new `TasksButton` next to `AppSidebarJournalButton`). Shows the Inbox count as a small badge when > 0. Route `/tasks`.                                                                        |
+| Android  | New tab `tasks` in `mobile/components/app-tabs/data.tsx` that **replaces the `all` (All docs) tab** (order: home, journal, **tasks**, new). Route `/tasks`. Badge dot when Inbox > 0. All docs must stay reachable another way (home screen or search); check this when implementing. |
 
 ## Navigation inside Tasks
 
@@ -35,14 +35,14 @@ browser; desktop and Android layouts, clickable). Background:
 
 Count rules (unchecked tasks only, in non-trashed docs):
 
-| View | Contains |
-| --- | --- |
-| Inbox | no date **and** no priority |
-| Today | due today **or overdue** (overdue gets its own red group) |
-| Tomorrow | due tomorrow |
-| Next 7 Days | overdue + today + next 6 days, grouped by day |
-| All tasks | everything unchecked: Scheduled, No date (priority only), Inbox |
-| Completed | all checked tasks, newest completion first, grouped by completion date |
+| View        | Contains                                                               |
+| ----------- | ---------------------------------------------------------------------- |
+| Inbox       | no date **and** no priority                                            |
+| Today       | due today **or overdue** (overdue gets its own red group)              |
+| Tomorrow    | due tomorrow                                                           |
+| Next 7 Days | overdue + today + next 6 days, grouped by day                          |
+| All tasks   | everything unchecked: Scheduled, No date (priority only), Inbox        |
+| Completed   | all checked tasks, newest completion first, grouped by completion date |
 
 "No date (priority only)" exists because the requirement says setting only a
 priority removes a task from Inbox, which would otherwise leave it in no view.
@@ -61,7 +61,7 @@ priority removes a task from Inbox, which would otherwise leave it in no view.
   ("Project Kickoff › TODO"). Clicking it opens the doc scrolled to the block
   (`navigation/utils.ts` `blockIds`). This is the "link back to the page".
 - **Right side**: date label (`Today`, `Tomorrow`, `Fri 30 Oct`, red `2d ago`
-  when overdue; optional time), priority flag. In Inbox rows, hovering swaps
+  when overdue; date only in v1), priority flag. In Inbox rows, hovering swaps
   these for two buttons: calendar and flag.
 - Inbox groups rows **by source doc** (so the two "Project Kickoff" TODOs sit
   together), newest doc first. Other views group by date. Group headers are
@@ -132,15 +132,15 @@ The field also understands the inline syntax below.
 
 ## Empty states
 
-| Where | Illustration + copy | Action |
-| --- | --- | --- |
-| Inbox (all triaged) | "Inbox zero. Every checkbox from your docs has a date or priority." | none |
-| Today | "Nothing due today. Enjoy it, or pull something in from the Inbox." | Go to Inbox |
-| Tomorrow / Next 7 Days | "Nothing planned…" | Go to Inbox |
-| All tasks (workspace has no TODOs) | "No tasks yet. Type `[ ]` in any doc to make a checkbox, or add one above." | Add a task |
-| Completed | "No completed tasks" | none |
-| Loading (indexer still syncing) | skeleton rows, 3 groups | none |
-| Error / indexer not ready | inline banner "Couldn't load tasks" + Retry | Retry |
+| Where                              | Illustration + copy                                                         | Action      |
+| ---------------------------------- | --------------------------------------------------------------------------- | ----------- |
+| Inbox (all triaged)                | "Inbox zero. Every checkbox from your docs has a date or priority."         | none        |
+| Today                              | "Nothing due today. Enjoy it, or pull something in from the Inbox."         | Go to Inbox |
+| Tomorrow / Next 7 Days             | "Nothing planned…"                                                          | Go to Inbox |
+| All tasks (workspace has no TODOs) | "No tasks yet. Type `[ ]` in any doc to make a checkbox, or add one above." | Add a task  |
+| Completed                          | "No completed tasks"                                                        | none        |
+| Loading (indexer still syncing)    | skeleton rows, 3 groups                                                     | none        |
+| Error / indexer not ready          | inline banner "Couldn't load tasks" + Retry                                 | Retry       |
 
 ## Where date and priority are stored
 
@@ -149,11 +149,11 @@ Option A therefore adds three optional props: `due`, `priority` and
 `completedAt` (date set when checked, cleared when unchecked; the Completed view
 needs it, and `meta:updatedAt` is not reliable because any later edit changes it).
 
-| Option | How | Pros | Cons |
-| --- | --- | --- | --- |
-| **A. Block props** | Add optional `due` (ISO date, optional time) and `priority` (0-3) props to `affine:list` | Travels with the block (move, copy, export, undo/redo). Already syncs to desktop and Android through Yjs. The indexer can read it straight off the block. Editor can render a date chip inline. | Model change in `blocksuite`; need to confirm unknown props survive on older clients and in import/export adapters; touches the shared editor. |
-| **B. Side store** | A workspace-level map keyed by `docId:blockId` | No block-model change; easy to ship and iterate. | Orphans when blocks are deleted or copied; needs GC; invisible in the doc; extra sync surface; ids differ when a doc is duplicated. |
-| **C. Inline text syntax** | Parse `@tomorrow !high` out of the TODO text | Fully portable (Markdown export is lossless); no model change. | Fragile parsing, clutters the text, bad on mobile keyboards, hard to edit via UI. |
+| Option                    | How                                                                                                           | Pros                                                                                                                                                                                            | Cons                                                                                                                                           |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A. Block props**        | Add optional `due` (ISO date; time of day is out of scope for v1) and `priority` (0-3) props to `affine:list` | Travels with the block (move, copy, export, undo/redo). Already syncs to desktop and Android through Yjs. The indexer can read it straight off the block. Editor can render a date chip inline. | Model change in `blocksuite`; need to confirm unknown props survive on older clients and in import/export adapters; touches the shared editor. |
+| **B. Side store**         | A workspace-level map keyed by `docId:blockId`                                                                | No block-model change; easy to ship and iterate.                                                                                                                                                | Orphans when blocks are deleted or copied; needs GC; invisible in the doc; extra sync surface; ids differ when a doc is duplicated.            |
+| **C. Inline text syntax** | Parse `@tomorrow !high` out of the TODO text                                                                  | Fully portable (Markdown export is lossless); no model change.                                                                                                                                  | Fragile parsing, clutters the text, bad on mobile keyboards, hard to edit via UI.                                                              |
 
 **Recommendation: A**, with `priority` and a date-only `due` first (time of day
 later). It is the only option where the data cannot drift away from its block,
@@ -167,7 +167,7 @@ field), typing a token such as `@today` or `!high` is recognised, the token text
 is removed, and the date or priority is set.
 
 This does **not** change the storage recommendation. It is option C used as an
-*input shortcut* on top of option A: the token never persists in the text, it is
+_input shortcut_ on top of option A: the token never persists in the text, it is
 parsed into block props. Storage stays A.
 
 Behaviour:

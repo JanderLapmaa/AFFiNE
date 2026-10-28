@@ -23,9 +23,30 @@ A TODO is a list block with `type: 'todo'`, not a block type of its own:
   `checked`, `text`, plus `meta:createdAt/By` and `meta:updatedAt/By`.
 - Editor behaviour: `blocksuite/affine/blocks/list/src/` (`list-block.ts`,
   `commands/`, `list-keymap.ts`, `markdown.ts` for the `[ ]` shortcut, `adapters/`).
-- TODOs have no due date, priority or reminder. Adding any of those means new
-  block props (stored in the Yjs doc and synced) or a side store keyed by
-  `docId:blockId`.
+- Task props (this fork): optional `due` (`'YYYY-MM-DD'`), `priority` (0-3)
+  and `completedAt` (epoch ms) on the list block. See below.
+
+## Task props: storage findings
+
+Checked by `blocksuite/affine/all/src/__tests__/list/list-todo-roundtrip.unit.spec.ts`.
+
+- **Unmodified clients keep the props.** Stock AFFiNE clients load, edit
+  (text, toggle, type change, indent/move) and sync docs without touching
+  unknown `prop:*` keys, and their snapshots include them.
+- **AFFiNE-format export/import and copy/paste keep them** (snapshots are built
+  from the Y.Map keys, not the schema).
+- **Markdown, HTML and plain-text export drop them** (only `[ ]`/`[x]`
+  survives). Accepted by the user.
+- **Schema version stays 1.** The store has no migrations, and earlier additive
+  props (`textAlign`, `comments`) didn't bump it.
+- **`checked` is the source of truth, not `completedAt`.** An unmodified client
+  that unchecks leaves a stale `completedAt`, one that checks sets none, and
+  imported/pasted `[x]` todos get none (completion time unknown). Consumers
+  need a fallback order for checked tasks without `completedAt`.
+- **Write `checked` through `setTodoChecked`** (list block package), never a
+  bare `updateBlock`: `store.updateBlock` ignores `undefined` values, so it
+  can't clear `completedAt`. `getTodoCheckedProps` (model package) is the
+  `addBlock` variant.
 
 ## Touch points
 

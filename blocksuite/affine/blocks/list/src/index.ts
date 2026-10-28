@@ -4,3 +4,4 @@ export { correctNumberedListsOrderToPrev } from './commands/utils';
 export * from './list-block.js';
 export * from './turbo/list-layout-handler';
 export * from './turbo/list-painter.worker';
+export { setTodoChecked } from './utils/set-todo-checked';

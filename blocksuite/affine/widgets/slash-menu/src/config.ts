@@ -167,6 +167,9 @@ export const defaultSlashMenuConfig: SlashMenuConfig = {
                 ).props.text.toDelta() as DeltaInsert[]
               ),
               checked: (model as ListBlockModel).props.checked,
+              completedAt: (model as ListBlockModel).props.completedAt,
+              due: (model as ListBlockModel).props.due,
+              priority: (model as ListBlockModel).props.priority,
             },
             host.store.getParent(model),
             index

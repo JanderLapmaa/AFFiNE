@@ -11,6 +11,9 @@ import type { BlockMeta } from '../../utils/types';
 // `toggle` type has been deprecated, do not use it
 export type ListType = 'bulleted' | 'numbered' | 'todo' | 'toggle';
 
+// 0/undefined none, 1 low, 2 medium, 3 high
+export type ListPriority = 0 | 1 | 2 | 3;
+
 export type ListProps = {
   type: ListType;
   text: Text;
@@ -19,6 +22,11 @@ export type ListProps = {
   collapsed: boolean;
   order: number | null;
   comments?: Record<string, boolean>;
+  // ISO date 'YYYY-MM-DD', local calendar day, no time
+  due?: string;
+  priority?: ListPriority;
+  // epoch ms; set when checked, cleared when unchecked
+  completedAt?: number;
 } & BlockMeta;
 
 export const ListBlockSchema = defineBlockSchema({
@@ -34,6 +42,9 @@ export const ListBlockSchema = defineBlockSchema({
       // number type only for numbered list
       order: null,
       comments: undefined,
+      due: undefined,
+      priority: undefined,
+      completedAt: undefined,
       'meta:createdAt': undefined,
       'meta:createdBy': undefined,
       'meta:updatedAt': undefined,
@@ -57,3 +68,15 @@ export const ListBlockSchema = defineBlockSchema({
 export const ListBlockSchemaExtension = BlockSchemaExtension(ListBlockSchema);
 
 export class ListBlockModel extends BlockModel<ListProps> {}
+
+/**
+ * Props for a todo created with a given `checked` state (`addBlock`).
+ * For an existing block use `setTodoChecked` (in the list block package):
+ * `updateBlock` ignores `undefined` values, so it cannot clear `completedAt`.
+ */
+export function getTodoCheckedProps(
+  checked: boolean,
+  now: number = Date.now()
+): Pick<ListProps, 'checked' | 'completedAt'> {
+  return { checked, completedAt: checked ? now : undefined };
+}

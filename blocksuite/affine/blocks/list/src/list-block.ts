@@ -29,6 +29,7 @@ import { styleMap } from 'lit/directives/style-map.js';
 import { correctNumberedListsOrderToPrev } from './commands/utils.js';
 import { listBlockStyles } from './styles.js';
 import { getListIcon } from './utils/get-list-icon.js';
+import { setTodoChecked } from './utils/set-todo-checked.js';
 
 export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> {
   static override styles = listBlockStyles;
@@ -54,8 +55,7 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
       if (this.store.readonly) return;
 
       this.store.captureSync();
-      const checkedPropObj = { checked: !this.model.props.checked };
-      this.store.updateBlock(this.model, checkedPropObj);
+      setTodoChecked(this.store, this.model, !this.model.props.checked);
       if (this.model.props.checked) {
         const checkEl = this.querySelector('.affine-list-block__todo-prefix');
         if (checkEl) {

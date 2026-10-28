@@ -1,4 +1,5 @@
 import {
+  getTodoCheckedProps,
   type ListBlockModel,
   ListBlockSchema,
   type ListType,
@@ -65,7 +66,7 @@ export const ListMarkdownExtension =
             type: type,
             text: model.text?.clone(),
             children: model.children,
-            ...(type === 'todo' ? { checked } : {}),
+            ...(type === 'todo' ? getTodoCheckedProps(checked) : {}),
           },
           parent,
           index
