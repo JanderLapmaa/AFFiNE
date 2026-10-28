@@ -143,6 +143,7 @@ non-trashed, non-template doc in the workspace.
   - `undo` support for the last triage or toggle, used by the toast
 
   It reads through the docs-search/indexer layer and writes through the doc module, by opening the source doc and updating the block props. It takes an injectable clock, so "today" is the local calendar day and tests are deterministic.
+
 - **View membership rules** (unchecked unless stated): Inbox = no due and no priority. Today = due ≤ today, with overdue as its own group. Tomorrow = due today+1. Next 7 Days = due ≤ today+6, grouped by day, overdue first. All = every unchecked task, grouped Scheduled / No date (priority only) / Inbox. Completed = checked, newest `completedAt` first, grouped by completion day. Completed tasks also stay crossed off in their normal views: a dated task while due ≥ today, an undated task until the end of its completion day. They sort below open tasks in their group and are never shown as overdue.
 - **Grouping:** Inbox groups by source doc, newest doc first. The other views group by date. Collapsed group state is per view and per viewer, kept in local UI state.
 - **Token parser:** a pure function shared by quick add now and the editor later. It returns `{ text, due?, priority? }` and recognises the tokens listed in the user stories, parsing on completed tokens only.
@@ -151,6 +152,15 @@ non-trashed, non-template doc in the workspace.
 - **Feature flag:** ship behind a feature flag that is on by default in this fork, so it can be turned off if the index misbehaves.
 - **UI** uses existing `@affine/component` pieces (checkbox, menu, date picker, toast) and AFFiNE theme tokens. TickTick is only a workflow reference. Strings go in the i18n English resource.
 - **Order of work:** (1) props + round-trip spike, (2) extractor + index version bumps, (3) tasks service with tests, (4) desktop UI, (5) Android UI, (6) quick add + hidden doc.
+
+## Decisions made during implementation
+
+Confirmed by the user while building:
+
+- **Inbox doc order:** "newest doc first" means newest by the doc's **created** date.
+- **Row order inside a group:** open tasks above completed ones; then priority high → low; then the TODO's position in its doc (`additional.order` from the indexer), then doc id for ties across docs.
+- **Checked tasks without `completedAt`** (ticked in an unmodified client, or imported/pasted as `[x]`): use the source doc's last-updated date as the completion time, for both the Completed grouping and the "crossed off until the end of the completion day" rule. `checked` stays the source of truth; a stale `completedAt` on an unchecked task is ignored.
+- **Index schema:** unchanged; the service queries `flavour: affine:list` and keeps `additional.listType === 'todo'` rows client-side (see [indexer.md](indexer.md)).
 
 ## Testing Decisions
 

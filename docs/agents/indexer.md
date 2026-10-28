@@ -59,14 +59,15 @@ indexed field then (schema change plus both version bumps).
 Doc-level data stays out of the index: doc order (newest doc first), trashed
 and template flags come from the workspace doc metadata at query time.
 
-| Key           | Value             | Emitted when                                                                    |
-| ------------- | ----------------- | ------------------------------------------------------------------------------- |
-| `listType`    | `'todo'`          | always (todo blocks only)                                                       |
-| `checked`     | boolean           | always; `prop:checked === true`, else `false`                                   |
-| `due`         | `'YYYY-MM-DD'`    | `prop:due` is a string matching `^\d{4}-\d{2}-\d{2}$`                           |
-| `priority`    | `1` \| `2` \| `3` | `prop:priority` is an integer 1-3 (0 = none, omitted)                           |
-| `completedAt` | epoch ms          | `prop:completedAt` is a finite number                                           |
-| `heading`     | string            | a heading exists above the block (rule below) and its trimmed text is non-empty |
+| Key           | Value             | Emitted when                                                                                                             |
+| ------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `listType`    | `'todo'`          | always (todo blocks only)                                                                                                |
+| `checked`     | boolean           | always; `prop:checked === true`, else `false`                                                                            |
+| `due`         | `'YYYY-MM-DD'`    | `prop:due` is a string matching `^\d{4}-\d{2}-\d{2}$`                                                                    |
+| `priority`    | `1` \| `2` \| `3` | `prop:priority` is an integer 1-3 (0 = none, omitted)                                                                    |
+| `completedAt` | epoch ms          | `prop:completedAt` is a finite number                                                                                    |
+| `heading`     | string            | a heading exists above the block (rule below) and its trimmed text is non-empty                                          |
+| `order`       | integer           | the block is reachable in the heading walk (below): its 0-based position among all blocks visited in that pre-order walk |
 
 Numbers must be plain numbers: a Yjs bigint value is rejected (key omitted)
 on both sides. Keys whose condition fails are omitted, never `null`. Existing keys
@@ -78,7 +79,8 @@ todo is the last `affine:paragraph` with `prop:type` `h1`-`h6` visited before
 it, across notes. Its text is the plain string of `prop:text`, trimmed with the JS
 `String.prototype.trim` whitespace set (the native side matches that set
 exactly). If a doc has several `affine:page` blocks, start from the one with
-the lowest `sys:id` (string order).
+the lowest `sys:id` (string order). A `sys:children` id with no matching block is
+skipped and doesn't take an `order` position.
 This is independent of each extractor's own traversal order.
 
 **Shared fixture:** `packages/common/native/fixtures/tasks.ydoc` with
@@ -86,5 +88,5 @@ This is independent of each extractor's own traversal order.
 native nbstore indexer tests both assert against it, so the two extractors
 can't drift.
 
-Index versions bumped for this: IndexedDB `indexVersion()` 1 → 2,
-`NBSTORE_INDEXER_VERSION` 7 → 8.
+Index versions bumped for this: IndexedDB `indexVersion()` 1 → 2 → 3,
+`NBSTORE_INDEXER_VERSION` 7 → 8 → 9 (the second bump added `order`).

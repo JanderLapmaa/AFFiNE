@@ -321,7 +321,15 @@ async fn failed_atomic_commit_keeps_index_dirty_and_clock_unadvanced() {
   cleanup(&db_path).await;
 }
 
-const TASK_KEYS: [&str; 6] = ["listType", "checked", "due", "priority", "completedAt", "heading"];
+const TASK_KEYS: [&str; 7] = [
+  "listType",
+  "checked",
+  "due",
+  "priority",
+  "completedAt",
+  "heading",
+  "order",
+];
 
 async fn crawl_snapshot(bin: &[u8]) -> NativeCrawlResult {
   let db_path = temp_workspace_dir().join("storage.db");
@@ -515,12 +523,12 @@ async fn crawl_adds_task_fields_to_todo_blocks() {
 
   assert_eq!(
     task("t-plain"),
-    serde_json::json!({"listType": "todo", "checked": false})
+    serde_json::json!({"listType": "todo", "checked": false, "order": 2})
   );
   assert_eq!(
     task("t-checked"),
     serde_json::json!({
-      "listType": "todo", "checked": true, "completedAt": 1_767_225_600_000_i64, "heading": "Alpha"
+      "listType": "todo", "checked": true, "completedAt": 1_767_225_600_000_i64, "heading": "Alpha", "order": 4
     })
   );
   // Integers stay integers in the JSON string (`3`, not `3.0`).
@@ -537,18 +545,18 @@ async fn crawl_adds_task_fields_to_todo_blocks() {
   assert_eq!(
     task("t-due"),
     serde_json::json!({
-      "listType": "todo", "checked": false, "due": "2026-01-05", "priority": 3, "heading": "Alpha"
+      "listType": "todo", "checked": false, "due": "2026-01-05", "priority": 3, "heading": "Alpha", "order": 5
     })
   );
   // priority 0 is omitted.
   assert_eq!(
     task("t-p0"),
-    serde_json::json!({"listType": "todo", "checked": false, "heading": "Alpha"})
+    serde_json::json!({"listType": "todo", "checked": false, "heading": "Alpha", "order": 6})
   );
   // A malformed due and an out-of-range priority are omitted.
   assert_eq!(
     task("t-bad-due"),
-    serde_json::json!({"listType": "todo", "checked": false, "heading": "Alpha"})
+    serde_json::json!({"listType": "todo", "checked": false, "heading": "Alpha", "order": 7})
   );
   // Bulleted lists and other blocks carry no task keys.
   for id in ["bullet", "h1", "n1", "page"] {
@@ -559,16 +567,21 @@ async fn crawl_adds_task_fields_to_todo_blocks() {
   // Nested todos follow their parent in pre-order, under the same heading.
   assert_eq!(
     task("t-parent"),
-    serde_json::json!({"listType": "todo", "checked": false, "heading": "Alpha"})
+    serde_json::json!({"listType": "todo", "checked": false, "heading": "Alpha", "order": 9})
   );
   assert_eq!(
     task("t-nested"),
-    serde_json::json!({"listType": "todo", "checked": false, "due": "2026-02-01", "heading": "Alpha"})
+    serde_json::json!({"listType": "todo", "checked": false, "due": "2026-02-01", "heading": "Alpha", "order": 10})
   );
+  // A nested todo comes after its parent and before the parent's next sibling
+  // (the n2 note's heading, then its todos).
+  let order = |id: &str| task(id)["order"].as_u64().unwrap();
+  assert!(order("t-parent") < order("t-nested"));
+  assert!(order("t-nested") < order("t-second"));
   // The heading carries across notes until a later heading replaces it.
   assert_eq!(
     task("t-second"),
-    serde_json::json!({"listType": "todo", "checked": false, "heading": "Beta"})
+    serde_json::json!({"listType": "todo", "checked": false, "heading": "Beta", "order": 13})
   );
 }
 
@@ -620,8 +633,11 @@ fn task_fields_start_from_the_lowest_page_id() {
 
   let fields = collect_task_fields(&doc.encode_update_v1().unwrap()).unwrap();
   assert_eq!(fields["t-a"]["heading"], "A");
+  // page-a (0), note-a (1), h-a (2), t-a (3).
+  assert_eq!(fields["t-a"]["order"], 3);
   // Not reachable from the chosen page: other fields only.
   assert!(fields["t-b"].get("heading").is_none());
+  assert!(fields["t-b"].get("order").is_none());
   assert_eq!(fields["t-b"]["listType"], "todo");
 }
 
@@ -655,6 +671,8 @@ fn task_fields_survive_a_very_deep_tree() {
   let fields = collect_task_fields(&doc.encode_update_v1().unwrap()).unwrap();
   assert_eq!(fields.len(), DEPTH);
   assert_eq!(fields[&format!("l{}", DEPTH - 1)]["heading"], "Deep");
+  // page (0), note (1), h (2), l0 (3), ...
+  assert_eq!(fields[&format!("l{}", DEPTH - 1)]["order"], DEPTH + 2);
 }
 
 #[test]

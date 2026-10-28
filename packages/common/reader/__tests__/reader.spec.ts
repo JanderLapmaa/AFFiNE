@@ -250,6 +250,7 @@ const TASK_KEYS = [
   'priority',
   'completedAt',
   'heading',
+  'order',
 ] as const;
 
 test('should read task fields from todo list blocks', async () => {
@@ -286,6 +287,15 @@ test('should read task fields from todo list blocks', async () => {
   }
 
   expect(actual).toEqual(expected);
+
+  // a nested todo comes after the block before its parent and before the next
+  // sibling of its parent (document order)
+  expect(expected['t-nested'].order).toBeGreaterThan(
+    expected['t-under-h2'].order
+  );
+  expect(expected['t-nested'].order).toBeLessThan(
+    expected['t-under-blank-heading'].order
+  );
 });
 
 test('should start the task heading walk from the lowest page id', async () => {
@@ -329,4 +339,6 @@ test('should start the task heading walk from the lowest page id', async () => {
   // the heading walk starts from the lowest-id page (page-a), which does not
   // reach todo-b, so no heading even though h-b sits above it under page-b
   expect(todoB?.additional).not.toHaveProperty('heading');
+  // ... and no order either (page-a walk never reaches it)
+  expect(todoB?.additional).not.toHaveProperty('order');
 });

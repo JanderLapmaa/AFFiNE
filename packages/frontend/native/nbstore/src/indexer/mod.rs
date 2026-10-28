@@ -17,7 +17,7 @@ pub(super) use table::{TableIndex, string_values};
 
 pub(super) use super::{DocIndexedClock, error, storage::SqliteDocStorage};
 
-const NBSTORE_INDEXER_VERSION: u32 = 8;
+const NBSTORE_INDEXER_VERSION: u32 = 9;
 
 pub struct IndexManager {
   pub(super) doc: TableIndex,

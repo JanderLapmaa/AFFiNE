@@ -84,12 +84,13 @@ const tree: Node = n('page', 'affine:page', {}, 'Tasks fixture', [
 
 // blockId -> exact contract fields, written by hand (not derived from the reader)
 export const expectedTaskFields: Record<string, Record<string, unknown>> = {
-  't-before-heading': { listType: 'todo', checked: false },
+  't-before-heading': { listType: 'todo', checked: false, order: 3 },
   't-under-h1-checked': {
     listType: 'todo',
     checked: true,
     completedAt: 1767225600000,
     heading: 'Alpha',
+    order: 5,
   },
   't-due-priority': {
     listType: 'todo',
@@ -97,31 +98,54 @@ export const expectedTaskFields: Record<string, Record<string, unknown>> = {
     due: '2026-01-05',
     priority: 3,
     heading: 'Alpha',
+    order: 6,
   },
-  't-priority-zero': { listType: 'todo', checked: false, heading: 'Alpha' },
-  't-bad-due': { listType: 'todo', checked: false, heading: 'Alpha' },
-  't-bad-priority': { listType: 'todo', checked: false, heading: 'Alpha' },
-  't-out-of-range': { listType: 'todo', checked: false, heading: 'Alpha' },
+  't-priority-zero': {
+    listType: 'todo',
+    checked: false,
+    heading: 'Alpha',
+    order: 7,
+  },
+  't-bad-due': { listType: 'todo', checked: false, heading: 'Alpha', order: 8 },
+  't-bad-priority': {
+    listType: 'todo',
+    checked: false,
+    heading: 'Alpha',
+    order: 9,
+  },
+  't-out-of-range': {
+    listType: 'todo',
+    checked: false,
+    heading: 'Alpha',
+    order: 10,
+  },
   't-stale-completed': {
     listType: 'todo',
     checked: false,
     completedAt: 1767225600000,
     heading: 'Alpha',
+    order: 11,
   },
-  't-under-h2': { listType: 'todo', checked: false, heading: 'Beta' },
+  't-under-h2': {
+    listType: 'todo',
+    checked: false,
+    heading: 'Beta',
+    order: 14,
+  },
   't-nested': {
     listType: 'todo',
     checked: false,
     due: '2026-02-01',
     heading: 'Beta',
+    order: 16,
   },
-  't-under-blank-heading': { listType: 'todo', checked: false },
-  't-second-note': { listType: 'todo', checked: false },
-  't-bigint': { listType: 'todo', checked: false },
+  't-under-blank-heading': { listType: 'todo', checked: false, order: 18 },
+  't-second-note': { listType: 'todo', checked: false, order: 20 },
+  't-bigint': { listType: 'todo', checked: false, order: 21 },
   // U+FEFF is trimmed by JS String.prototype.trim, so no heading
-  't-under-bom': { listType: 'todo', checked: false },
+  't-under-bom': { listType: 'todo', checked: false, order: 23 },
   // U+0085 is not trimmed by JS, so it stays as the heading
-  't-under-nel': { listType: 'todo', checked: false, heading: '' },
+  't-under-nel': { listType: 'todo', checked: false, heading: '', order: 25 },
 };
 
 // Y.Map#set rejects bigint, so integrate the item by hand (what a client

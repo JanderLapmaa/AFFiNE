@@ -69,7 +69,7 @@ pub(super) fn collect_task_fields(doc_bin: &[u8]) -> Option<HashMap<String, Task
     if visited.contains(id) {
       continue;
     }
-    if let Some(fields) = value.to_map().and_then(|block| todo_fields(&block, None)) {
+    if let Some(fields) = value.to_map().and_then(|block| todo_fields(&block, None, None)) {
       result.insert(id.to_string(), fields);
     }
   }
@@ -87,6 +87,8 @@ fn walk(
   result: &mut HashMap<String, TaskFields>,
 ) {
   let mut stack = vec![root.to_string()];
+  // 0-based position among all blocks visited (the page is 0).
+  let mut position: u64 = 0;
   while let Some(id) = stack.pop() {
     if !visited.insert(id.clone()) {
       continue;
@@ -94,6 +96,8 @@ fn walk(
     let Some(block) = blocks.get(&id).and_then(|value| value.to_map()) else {
       continue;
     };
+    let order = position;
+    position += 1;
     match string_prop(&block, "sys:flavour").as_deref() {
       Some(FLAVOUR_PARAGRAPH) => {
         let kind = string_prop(&block, "prop:type").unwrap_or_default();
@@ -103,7 +107,7 @@ fn walk(
         }
       }
       Some(FLAVOUR_LIST) => {
-        if let Some(fields) = todo_fields(&block, heading.as_deref()) {
+        if let Some(fields) = todo_fields(&block, heading.as_deref(), Some(order)) {
           result.insert(id.clone(), fields);
         }
       }
@@ -140,7 +144,7 @@ fn js_trim(text: &str) -> &str {
   })
 }
 
-fn todo_fields(block: &Map, heading: Option<&str>) -> Option<TaskFields> {
+fn todo_fields(block: &Map, heading: Option<&str>, order: Option<u64>) -> Option<TaskFields> {
   if string_prop(block, "sys:flavour").as_deref() != Some(FLAVOUR_LIST)
     || string_prop(block, "prop:type").as_deref() != Some("todo")
   {
@@ -169,6 +173,9 @@ fn todo_fields(block: &Map, heading: Option<&str>) -> Option<TaskFields> {
   }
   if let Some(heading) = heading.filter(|heading| !heading.is_empty()) {
     fields.insert("heading".into(), JsonValue::String(heading.to_string()));
+  }
+  if let Some(order) = order {
+    fields.insert("order".into(), JsonValue::from(order));
   }
   Some(fields)
 }

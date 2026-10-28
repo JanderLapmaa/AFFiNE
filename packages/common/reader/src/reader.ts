@@ -52,6 +52,7 @@ export interface BlockDocumentInfo {
     priority?: 1 | 2 | 3;
     completedAt?: number;
     heading?: string;
+    order?: number;
   };
   yblock: YMap<any>;
   markdownPreview?: string;
@@ -522,11 +523,14 @@ const HEADING_TYPES = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
 
 /**
  * Pre-order walk from the page block over `sys:children`; maps each todo list
- * block id to the trimmed text of the last heading visited before it. Kept
+ * block id to the trimmed text of the last heading visited before it (may be
+ * empty) and its 0-based position among all blocks visited in the walk. Kept
  * independent of the reader's own traversal order.
  */
-function collectTodoHeadings(blocks: YMap<YMap<any>>): Map<string, string> {
-  const result = new Map<string, string>();
+function collectTodoHeadings(
+  blocks: YMap<YMap<any>>
+): Map<string, { heading: string; order: number }> {
+  const result = new Map<string, { heading: string; order: number }>();
   // several pages: the walk starts from the lowest sys:id (string order),
   // independent of the page the reader itself treats as root
   let pageId: string | null = null;
@@ -543,24 +547,22 @@ function collectTodoHeadings(blocks: YMap<YMap<any>>): Map<string, string> {
   const visited = new Set<string>();
   const stack = pageId ? [pageId] : [];
   let heading = '';
+  let position = 0;
   while (stack.length) {
     const id = stack.pop() as string;
     if (visited.has(id)) continue;
     visited.add(id);
     const block = blocks.get(id);
     if (!block) continue;
+    const order = position++;
     const flavour = block.get('sys:flavour')?.toString();
     if (
       flavour === 'affine:paragraph' &&
       HEADING_TYPES.has(block.get('prop:type'))
     ) {
       heading = (block.get('prop:text')?.toString() ?? '').trim();
-    } else if (
-      flavour === 'affine:list' &&
-      block.get('prop:type') === 'todo' &&
-      heading
-    ) {
-      result.set(id, heading);
+    } else if (flavour === 'affine:list' && block.get('prop:type') === 'todo') {
+      result.set(id, { heading, order });
     }
     const children = block.get('sys:children');
     if (children instanceof YArray) {
@@ -574,7 +576,7 @@ function collectTodoHeadings(blocks: YMap<YMap<any>>): Map<string, string> {
 
 function readTaskFields(
   block: YMap<any>,
-  heading: string | undefined
+  walk: { heading: string; order: number } | undefined
 ): NonNullable<BlockDocumentInfo['additional']> {
   const due = block.get('prop:due');
   const priority = block.get('prop:priority');
@@ -587,7 +589,8 @@ function readTaskFields(
     ...(typeof completedAt === 'number' && Number.isFinite(completedAt)
       ? { completedAt }
       : {}),
-    ...(heading ? { heading } : {}),
+    ...(walk?.heading ? { heading: walk.heading } : {}),
+    ...(walk ? { order: walk.order } : {}),
   };
 }
 

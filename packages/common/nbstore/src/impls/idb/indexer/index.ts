@@ -222,6 +222,6 @@ export class IndexedDBIndexerStorage extends IndexerStorageBase {
   // Get the current indexer version
   // increase this number to re-index all docs
   async indexVersion(): Promise<number> {
-    return 2;
+    return 3;
   }
 }
