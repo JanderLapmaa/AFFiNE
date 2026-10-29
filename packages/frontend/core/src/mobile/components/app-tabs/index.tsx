@@ -1,4 +1,5 @@
 import { SafeArea } from '@affine/component';
+import { FeatureFlagService } from '@affine/core/modules/feature-flag';
 import { GlobalCacheService } from '@affine/core/modules/storage';
 import {
   WorkbenchLink,
@@ -11,7 +12,7 @@ import { createPortal } from 'react-dom';
 
 import { VirtualKeyboardService } from '../../modules/virtual-keyboard/services/virtual-keyboard';
 import { cacheKey } from './constants';
-import { tabs } from './data';
+import { getTabs } from './data';
 import * as styles from './styles.css';
 import { TabItem } from './tab-item';
 import type { AppTabLink } from './type';
@@ -30,6 +31,9 @@ export const AppTabs = ({
   const workbench = useService(WorkbenchService).workbench;
   const location = useLiveData(workbench.location$);
   const globalCache = useService(GlobalCacheService).globalCache;
+  const tasksEnabled = useLiveData(
+    useService(FeatureFlagService).flags.enable_tasks_view.$
+  );
 
   // always set the active tab to home when the location is changed to home
   useEffect(() => {
@@ -54,7 +58,7 @@ export const AppTabs = ({
       }}
     >
       <ul className={styles.appTabsInner} role="tablist">
-        {tabs.map(tab => {
+        {getTabs(tasksEnabled).map(tab => {
           if ('to' in tab) {
             return <AppTabLink route={tab} key={tab.key} />;
           } else {

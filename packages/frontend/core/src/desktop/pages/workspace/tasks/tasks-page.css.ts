@@ -36,12 +36,6 @@ export const nav = style({
   background: cssVarV2.layer.background.primary,
 });
 
-export const navEntry = style({
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 2,
-});
-
 export const navItem = style({
   display: 'flex',
   alignItems: 'center',

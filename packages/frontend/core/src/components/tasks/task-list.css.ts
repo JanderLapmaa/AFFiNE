@@ -7,6 +7,9 @@ export const list = style({
   minHeight: 0,
   overflowY: 'auto',
   padding: '0 24px 24px',
+  selectors: {
+    '&[data-mobile=true]': { padding: '0 16px 24px' },
+  },
 });
 
 export const group = style({

@@ -1,11 +1,13 @@
 import { IconButton, Menu } from '@affine/component';
+import {
+  TriageDatePart,
+  TriagePriorityPart,
+} from '@affine/core/components/tasks/triage-editor';
+import * as styles from '@affine/core/components/tasks/triage-editor.css';
 import type { TaskPriority, TaskRow } from '@affine/core/modules/tasks';
 import { useI18n } from '@affine/i18n';
 import { CalendarPanelIcon, FlagPanelIcon } from '@blocksuite/icons/rc';
 import { useState } from 'react';
-
-import { TriageDatePart, TriagePriorityPart } from './triage-editor';
-import * as styles from './triage-editor.css';
 
 export interface RowActionsProps {
   task: TaskRow;

@@ -43,6 +43,10 @@ export const workbenchRoutes = [
     Component: TagDetail,
   },
   {
+    path: '/tasks',
+    lazy: () => import('./pages/workspace/tasks'),
+  },
+  {
     path: '/journals',
     // lazy: () => import('./pages/workspace/journals'),
     Component: Journals,

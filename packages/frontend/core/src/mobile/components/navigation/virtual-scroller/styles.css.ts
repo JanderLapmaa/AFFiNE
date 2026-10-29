@@ -1,6 +1,6 @@
 import { headlineRegular } from '@toeverything/theme/typography';
 import { cssVarV2 } from '@toeverything/theme/v2';
-import { style } from '@vanilla-extract/css';
+import { globalStyle, style } from '@vanilla-extract/css';
 
 import { globalVars } from '../../../styles/variables.css';
 
@@ -90,4 +90,21 @@ export const tagIcon = style({
   width: 14,
   height: 14,
   borderRadius: '50%',
+});
+
+export const allDocsLink = style({
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  minHeight: 44,
+  margin: '0 8px 8px',
+  padding: '0 8px',
+  fontSize: 17,
+  color: cssVarV2.text.primary,
+});
+
+globalStyle(`${allDocsLink} svg`, {
+  width: 24,
+  height: 24,
+  color: cssVarV2.icon.primary,
 });

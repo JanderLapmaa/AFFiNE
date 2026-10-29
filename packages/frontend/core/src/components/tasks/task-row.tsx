@@ -121,6 +121,7 @@ export const TaskRowItem = forwardRef<HTMLDivElement, TaskRowItemProps>(
             id={titleId}
             className={styles.title}
             data-checked={task.checked}
+            data-mobile={BUILD_CONFIG.isMobileEdition}
           >
             {task.title}
           </div>

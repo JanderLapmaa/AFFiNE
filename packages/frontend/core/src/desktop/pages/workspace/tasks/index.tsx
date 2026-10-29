@@ -1,4 +1,9 @@
 import { Header } from '@affine/core/components/pure/header';
+import { TaskDetailContainer } from '@affine/core/components/tasks/detail-panel';
+import { TaskList, VIEW_ICONS } from '@affine/core/components/tasks/task-list';
+import { isInbox, rowShortcut } from '@affine/core/components/tasks/triage';
+import { useTaskActions } from '@affine/core/components/tasks/use-task-actions';
+import { parseView, viewHref } from '@affine/core/components/tasks/views';
 import { FeatureFlagService } from '@affine/core/modules/feature-flag';
 import {
   addDays,
@@ -28,14 +33,9 @@ import {
 } from 'react';
 
 import { PageNotFound } from '../../404';
-import { TaskDetailContainer } from './detail-panel';
 import { RowActions } from './row-actions';
-import { TaskList, VIEW_ICONS } from './task-list';
 import { TasksNav } from './tasks-nav';
 import * as styles from './tasks-page.css';
-import { isInbox, rowShortcut } from './triage';
-import { useTaskActions } from './use-task-actions';
-import { parseView, viewHref } from './views';
 
 const DETAIL_TAB_ID = 'tasks-detail';
 

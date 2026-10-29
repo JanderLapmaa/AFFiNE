@@ -19,6 +19,7 @@ export type MobileDestinationKind =
   | 'all-collections'
   | 'all-tags'
   | 'journal'
+  | 'tasks'
   | 'doc'
   | 'search'
   | 'collection'
@@ -64,6 +65,7 @@ const rootKinds = new Set<MobileDestinationKind>([
   'all-collections',
   'all-tags',
   'journal',
+  'tasks',
 ]);
 
 export const isMobileRootDestination = (kind: MobileDestinationKind) =>

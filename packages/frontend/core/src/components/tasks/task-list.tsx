@@ -191,6 +191,8 @@ export const TaskList = ({
       lastIndexRef.current = index;
       return;
     }
+    // Touch: focus() would scroll the list and could pop the keyboard.
+    if (BUILD_CONFIG.isMobileEdition) return;
     if (!activeId || lastIndexRef.current < 0) return;
     const active = document.activeElement;
     if (active && active !== document.body) return;
@@ -246,7 +248,11 @@ export const TaskList = ({
   const showEmpty = !hasGroups && state.status === 'ready';
 
   return (
-    <div className={styles.list} data-testid="tasks-list">
+    <div
+      className={styles.list}
+      data-testid="tasks-list"
+      data-mobile={BUILD_CONFIG.isMobileEdition}
+    >
       {failed ? <ErrorBanner onRetry={onRetry} /> : null}
       {loading ? <TasksSkeleton /> : null}
       {showEmpty ? <EmptyState view={view} onGoToInbox={onGoToInbox} /> : null}

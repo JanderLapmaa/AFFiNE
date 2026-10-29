@@ -52,3 +52,17 @@ export const tabItem = style({
     },
   },
 });
+
+export const badgeHost = style({
+  position: 'relative',
+  display: 'inline-flex',
+});
+export const badge = style({
+  position: 'absolute',
+  top: 0,
+  right: 0,
+  width: 8,
+  height: 8,
+  borderRadius: '50%',
+  background: cssVarV2.button.error,
+});

@@ -18,11 +18,19 @@ export const row = style({
   cursor: 'pointer',
   outline: 'none',
   selectors: {
-    '&:hover, &:focus-visible, &[data-selected=true]': {
+    '&:focus-visible, &[data-selected=true]': {
       background: cssVarV2.layer.background.hoverOverlay,
     },
     '&:focus-visible': {
       boxShadow: `inset 0 0 0 1px ${cssVarV2.layer.insideBorder.primaryBorder}`,
+    },
+  },
+  '@media': {
+    // Touch: a tap must not leave the row highlighted.
+    '(hover: hover)': {
+      selectors: {
+        '&:hover': { background: cssVarV2.layer.background.hoverOverlay },
+      },
     },
   },
 });
@@ -61,6 +69,13 @@ export const title = style({
     '&[data-checked=true]': {
       textDecoration: 'line-through',
       color: cssVarV2.text.disable,
+    },
+    // Mobile: up to two lines.
+    '&[data-mobile=true]': {
+      display: '-webkit-box',
+      WebkitBoxOrient: 'vertical',
+      WebkitLineClamp: 2,
+      whiteSpace: 'normal',
     },
   },
 });

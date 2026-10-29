@@ -4,10 +4,14 @@ import { NavigationPanelTreeRoot } from '@affine/core/desktop/components/navigat
 import { CollectionService } from '@affine/core/modules/collection';
 import { WorkspaceDialogService } from '@affine/core/modules/dialogs';
 import { FavoriteService } from '@affine/core/modules/favorite';
+import { FeatureFlagService } from '@affine/core/modules/feature-flag';
 import { NavigationPanelService } from '@affine/core/modules/navigation-panel';
 import { OrganizeService } from '@affine/core/modules/organize';
 import { TagService } from '@affine/core/modules/tag';
-import { WorkbenchService } from '@affine/core/modules/workbench';
+import {
+  WorkbenchLink,
+  WorkbenchService,
+} from '@affine/core/modules/workbench';
 import { WorkspaceService } from '@affine/core/modules/workspace';
 import { useI18n } from '@affine/i18n';
 import { track } from '@affine/track';
@@ -15,6 +19,7 @@ import {
   AddCollectionIcon,
   AddOrganizeIcon,
   AddTagIcon,
+  AllDocsIcon,
   FolderIcon,
   PageIcon,
   RemoveFolderIcon,
@@ -74,9 +79,25 @@ const sectionTitles = {
   tags: 'com.affine.rootAppSidebar.tags',
 } as const;
 
+/** The Tasks tab takes the place of the All docs tab, so home links to it. */
+const AllDocsLink = () => {
+  const t = useI18n();
+  const tasksEnabled = useLiveData(
+    useService(FeatureFlagService).flags.enable_tasks_view.$
+  );
+  if (!tasksEnabled) return null;
+  return (
+    <WorkbenchLink to="/all" className={styles.allDocsLink}>
+      <AllDocsIcon />
+      {t['com.affine.workspaceSubPath.all']()}
+    </WorkbenchLink>
+  );
+};
+
 const Header = () => (
   <>
     <HomeHeader />
+    <AllDocsLink />
     <RecentDocs />
   </>
 );

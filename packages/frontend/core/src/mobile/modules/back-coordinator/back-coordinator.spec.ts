@@ -50,6 +50,7 @@ describe('MobileBackCoordinator', () => {
     'all-collections',
     'all-tags',
     'journal',
+    'tasks',
   ] as const)('passes back through at the %s root', kind => {
     const coordinator = createCoordinator();
     const back = vi.fn();
