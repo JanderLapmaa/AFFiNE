@@ -13,6 +13,7 @@ import {
   NEVER,
   Observable,
   observeOn,
+  of,
   scan,
   shareReplay,
   startWith,
@@ -45,6 +46,30 @@ import type { TasksClockStore } from './tasks-clock';
 
 // Safety net: an optimistic value never outlives this, whatever the index does.
 const OVERLAY_SAFETY_TIMEOUT_MS = 60_000;
+
+// memory-indexer rejects a search where skip + limit exceeds this.
+const INDEXER_WINDOW = 10_000;
+
+// Batches stay under the window so docs growing meanwhile still fit.
+const BATCH_SIZE = 9000;
+
+const LIST_QUERY = {
+  type: 'match' as const,
+  field: 'flavour' as const,
+  match: 'affine:list',
+};
+const LIST_FIELDS: ('docId' | 'blockId' | 'content' | 'additional')[] = [
+  'docId',
+  'blockId',
+  'content',
+  'additional',
+];
+
+type SearchNode = {
+  id: string;
+  score: number;
+  fields: Partial<Record<(typeof LIST_FIELDS)[number], string | string[]>>;
+};
 
 const DUE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -158,15 +183,16 @@ export class TasksService extends Service {
       switchMap(() => {
         this.queryError$.next(null);
         return this.indexer
-          .search$(
-            'block',
-            { type: 'match', field: 'flavour', match: 'affine:list' },
-            {
-              fields: ['docId', 'blockId', 'content', 'additional'],
-              pagination: { skip: 0, limit: Infinity },
-            }
-          )
+          .search$('block', LIST_QUERY, {
+            fields: LIST_FIELDS,
+            pagination: { skip: 0, limit: INDEXER_WINDOW },
+          })
           .pipe(
+            // The native indexer rejects any window beyond 10000 hits, so a
+            // bigger result is read in doc batches instead.
+            switchMap(first =>
+              first.pagination.hasMore ? this.readAllListBlocks$() : of(first)
+            ),
             map(({ nodes }) =>
               nodes.flatMap(node => {
                 const task = parseIndexedTask(node.fields);
@@ -302,6 +328,85 @@ export class TasksService extends Service {
       EMPTY_COUNTS
     );
     this.inboxCount$ = this.counts$.map(counts => counts.inbox);
+  }
+
+  /**
+   * Reads every list block when they don't fit one indexer window. Offsets
+   * can't go past the window either, so docs are grouped into batches whose
+   * list blocks fit it, and each batch is one query.
+   */
+  private readAllListBlocks$() {
+    return new Observable<{ nodes: SearchNode[] }>(subscriber => {
+      let cancelled = false;
+      this.readAllListBlocks(() => cancelled).then(
+        result => {
+          if (cancelled) return;
+          subscriber.next(result);
+          subscriber.complete();
+        },
+        error => {
+          if (!cancelled) subscriber.error(error);
+        }
+      );
+      return () => {
+        cancelled = true;
+      };
+    });
+  }
+
+  private async readAllListBlocks(isCancelled: () => boolean) {
+    const { buckets } = await this.indexer.aggregate(
+      'block',
+      LIST_QUERY,
+      'docId',
+      { pagination: { skip: 0, limit: Infinity } }
+    );
+    const batches: string[][] = [];
+    let batch: string[] = [];
+    let size = 0;
+    for (const bucket of buckets) {
+      if (batch.length && size + bucket.count > BATCH_SIZE) {
+        batches.push(batch);
+        batch = [];
+        size = 0;
+      }
+      batch.push(bucket.key);
+      size += bucket.count;
+    }
+    if (batch.length) batches.push(batch);
+
+    const nodes: SearchNode[] = [];
+    for (const docIds of batches) {
+      if (isCancelled()) break;
+      const result = await this.indexer.search(
+        'block',
+        {
+          type: 'boolean',
+          occur: 'must',
+          queries: [
+            LIST_QUERY,
+            {
+              type: 'boolean',
+              occur: 'should',
+              queries: docIds.map(docId => ({
+                type: 'match' as const,
+                field: 'docId' as const,
+                match: docId,
+              })),
+            },
+          ],
+        },
+        { fields: LIST_FIELDS, pagination: { skip: 0, limit: INDEXER_WINDOW } }
+      );
+      nodes.push(...result.nodes);
+      if (result.pagination.hasMore) {
+        // Kept rows are still shown; the rest can't be read in one window.
+        console.warn(
+          `[tasks] ${result.pagination.count} list blocks in doc(s) ${docIds.join(', ')} exceed the indexer window; showing the first ${result.nodes.length}`
+        );
+      }
+    }
+    return { nodes };
   }
 
   private get indexer() {

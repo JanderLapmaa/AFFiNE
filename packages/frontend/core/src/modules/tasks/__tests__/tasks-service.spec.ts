@@ -71,6 +71,50 @@ function fakeBlockModel(props: Record<string, unknown>) {
   return { flavour: 'affine:list', props };
 }
 
+type FakeNode = ReturnType<typeof node>;
+interface FakeQuery {
+  type: string;
+  field?: string;
+  match?: string;
+  queries?: FakeQuery[];
+  occur?: string;
+}
+interface FakeSearchOptions {
+  pagination?: { skip?: number; limit?: number };
+}
+
+const matches = (q: FakeQuery, n: FakeNode): boolean => {
+  if (q.type === 'match') {
+    return q.field === 'docId' ? n.fields.docId === q.match : true;
+  }
+  const subs = q.queries ?? [];
+  return q.occur === 'should'
+    ? subs.some(sub => matches(sub, n))
+    : subs.every(sub => matches(sub, n));
+};
+
+/** An indexer that, like the native one, refuses windows over 10000 hits. */
+function fakeSearch(
+  nodes: FakeNode[],
+  query: FakeQuery,
+  options: FakeSearchOptions
+) {
+  const { skip = 0, limit = 10 } = options.pagination ?? {};
+  if (limit > 10_000 || skip + limit > 10_000) {
+    throw new Error('search window exceeds 10000');
+  }
+  const hits = nodes.filter(n => matches(query, n));
+  return {
+    nodes: hits.slice(skip, skip + limit),
+    pagination: {
+      count: hits.length,
+      limit,
+      skip,
+      hasMore: hits.length > skip + limit,
+    },
+  };
+}
+
 function setup(
   options: {
     now?: number;
@@ -95,7 +139,23 @@ function setup(
   });
   const indexer = {
     state$: indexerState$,
-    search$: vi.fn(() => rows$ as Observable<unknown>),
+    search$: vi.fn(
+      (_table: string, query: FakeQuery, opts: FakeSearchOptions) =>
+        rows$.pipe(map(({ nodes }) => fakeSearch(nodes, query, opts)))
+    ),
+    search: vi.fn(
+      async (_table: string, query: FakeQuery, opts: FakeSearchOptions) =>
+        fakeSearch(rows$.value.nodes, query, opts)
+    ),
+    aggregate: vi.fn(async () => {
+      const counts = new Map<string, number>();
+      for (const n of rows$.value.nodes) {
+        counts.set(n.fields.docId, (counts.get(n.fields.docId) ?? 0) + 1);
+      }
+      return {
+        buckets: [...counts].map(([key, count]) => ({ key, count, score: 1 })),
+      };
+    }),
   };
 
   const models = new Map<string, ReturnType<typeof fakeBlockModel>>();
@@ -268,19 +328,82 @@ describe('TasksService view membership', () => {
     expect(shape(viewOf(env, 'all').value)).toEqual([['inbox', '', ['t1']]]);
   });
 
-  it('queries every list block, unpaginated', () => {
-    const env = setup();
-    viewOf(env, 'inbox');
-    expect(env.indexer.search$).toHaveBeenCalledTimes(1);
-    const [table, query, options] = env.indexer.search$.mock
-      .calls[0] as unknown as [string, unknown, { pagination: unknown }];
-    expect(table).toBe('block');
-    expect(query).toEqual({
-      type: 'match',
-      field: 'flavour',
-      match: 'affine:list',
+  it('reads every task when they exceed one indexer window', () => {
+    const tasks: TaskSpec[] = [];
+    for (let i = 0; i < 25_000; i++) {
+      tasks.push({ docId: `doc-${i % 7}`, blockId: `t${i}` });
+    }
+    const docs = Array.from({ length: 7 }, (_, i) => ({ id: `doc-${i}` }));
+    const env = setup({ tasks, docs });
+    const all = viewOf(env, 'all');
+    const state = watch(env.service.state$);
+    return flush().then(() => {
+      expect(state.value).toEqual({ status: 'ready' });
+      const ids = all.value.flatMap(g => g.rows.map(r => r.blockId));
+      expect(new Set(ids).size).toBe(25_000);
     });
-    expect(options.pagination).toMatchObject({ limit: Infinity });
+  });
+
+  it('keeps the other docs when one doc is too big to read', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const tasks: TaskSpec[] = [{ docId: 'small', blockId: 's1' }];
+      for (let i = 0; i < 10_500; i++) {
+        tasks.push({ docId: 'huge', blockId: `h${i}` });
+      }
+      const env = setup({
+        tasks,
+        docs: [{ id: 'small' }, { id: 'huge' }],
+      });
+      const all = viewOf(env, 'all');
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const ids = all.value.flatMap(g => g.rows.map(r => r.blockId));
+      expect(ids).toContain('s1');
+      expect(ids.length).toBeGreaterThan(1);
+      expect(ids.length).toBeLessThan(10_501);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('huge');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('stops reading batches once a newer read supersedes it', async () => {
+    const tasks: TaskSpec[] = [];
+    for (let i = 0; i < 15_000; i++) {
+      tasks.push({ docId: `doc-${i % 3}`, blockId: `t${i}` });
+    }
+    const env = setup({
+      tasks,
+      docs: [{ id: 'doc-0' }, { id: 'doc-1' }, { id: 'doc-2' }],
+    });
+    const realSearch = env.indexer.search.getMockImplementation()!;
+    const gates: (() => void)[] = [];
+    env.indexer.search.mockImplementation((...args) => {
+      return new Promise(resolve => {
+        gates.push(() => resolve(realSearch(...args)));
+      }) as never;
+    });
+    viewOf(env, 'all');
+    const tick = () => new Promise(resolve => setTimeout(resolve, 5));
+    await tick();
+    expect(gates.length).toBe(1); // first read waits on its first batch
+    env.index(tasks); // a newer emission supersedes it
+    await tick();
+    expect(gates.length).toBe(2);
+    gates[0](); // the stale batch finishes
+    await tick();
+    expect(gates.length).toBe(2); // ...and it asks for no more batches
+    gates[1](); // the current read carries on
+    await tick();
+    expect(gates.length).toBe(3);
+  });
+
+  it('keeps reading small task lists in one query', () => {
+    const env = setup({ tasks: [{ blockId: 't1' }, { blockId: 't2' }] });
+    expect(shape(viewOf(env, 'inbox').value)).toEqual([
+      ['doc', 'doc-a', ['t1', 't2']],
+    ]);
   });
 
   it('Inbox holds undated, unprioritised tasks only', () => {
