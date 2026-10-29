@@ -34,19 +34,8 @@ used in place of `ghcr.io/toeverything/affine:stable` in
   first use. Linking needs the MSVC Build Tools **and** a Windows 10/11 SDK
   with `um\x64` libs (`LNK1181: cannot open input file 'kernel32.lib'` means
   the SDK is missing or partial).
-- `cargo test -p affine_nbstore` has three tests that fail on Windows on an
-  unmodified checkout, all with OS error 32 ("file in use") in their
-  temp-dir cleanup: `storage::tests::vacuum_into_exports_a_compacted_database`,
-  `storage::tests::validate_import_schema_accepts_initial_v2_schema`,
-  `doc::tests::get_doc_reads_snapshot_and_updates_from_one_view`. They fail
-  single-threaded too. Treat them as pre-existing, not as regressions.
-- Don't run vitest while cargo is building: Vite's watcher crashes with
-  `EBUSY` on files under `target/`.
-- `vitest run packages/frontend/core` has four spec files that fail on Windows
-  on an unmodified checkout: `src/__tests__/share-page.spec.ts` (Vite "Denied
-  ID" on a template sticker path with `~`), the mermaid and typst
-  `*-preview.integration.spec.ts` (Playwright browser not installed) and
-  `src/utils/__tests__/first-app-data.spec.ts` (`localStorage` undefined).
+- Known Windows-only test failures (cargo and vitest) and the rule about not
+  running vitest during cargo builds: see `docs/agents/checks.md`.
 
 ## Windows desktop build (unpacked canary app)
 
@@ -111,5 +100,6 @@ Gotchas:
   upstream GitHub releases for updates; that 404 in `main.log` is expected.
 - Rebuilds: the stub `apps/electron/node_modules` shadows `esbuild` and breaks
   `generate-assets` (`Cannot find package '.../node_modules/esbuild/index.js'`).
-  Move `apps/electron/node_modules` aside while running generate-assets, then
-  move it back before `package`.
+  It also breaks `vitest` (stub `rxjs` etc. resolve for electron specs). Keep
+  that folder **outside the repo** and move it into `apps/electron/` only for
+  the `package` step, then move it out again.

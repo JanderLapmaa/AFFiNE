@@ -32,6 +32,7 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc -b tsconfig.json --verbose",
+    "check:changed": "node scripts/check-changed.mjs",
     "postinstall": "yarn affine init && yarn husky"
   },
   "lint-staged": {
