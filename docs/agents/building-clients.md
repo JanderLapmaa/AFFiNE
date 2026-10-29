@@ -50,9 +50,21 @@ yarn affine @affine/android cap sync
 cd packages/frontend/apps/android/App && ./gradlew.bat assembleCanaryDebug
 ```
 
+From Git Bash, also set `MSYS2_ENV_CONV_EXCL='*'`. Without it, MSYS rewrites
+`PUBLIC_PATH=/` to the Git install folder, and the app shows a white screen.
+PowerShell (`$env:PUBLIC_PATH = '/'`) doesn't have this problem.
+
 The build targets arm64 by default (`AFFINE_ANDROID_NATIVE_TARGET`). The
 output is `App/app/build/outputs/apk/canary/debug/app-canary-debug.apk`
 (~150 MB, debug-signed).
+
+After a Rust change, delete `merged_jni_libs`, `merged_native_libs` and
+`stripped_native_libs` under `App/app/build/intermediates` before
+`assembleCanaryDebug`. Otherwise Gradle can package the previous
+`libaffine_mobile_native.so`, even though a newer one was built. To check,
+compare the `.so` size in `unzip -l <apk>`, or read the native index version
+on the device (`NbStoreDocStorage.indexVersion()`, which is
+`NBSTORE_INDEXER_VERSION` plus 1 on Android).
 
 The build rewrites the tracked
 `App/app/src/main/java/uniffi/affine_mobile_native/affine_mobile_native.kt`
