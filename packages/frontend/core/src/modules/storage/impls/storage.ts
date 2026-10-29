@@ -33,13 +33,13 @@ export class StorageMemento implements Memento {
 
   get<T>(key: string): T | undefined {
     const json = this.storage.getItem(this.prefix + key);
-    return json ? JSON.parse(json) : undefined;
+    // Older builds stored the literal string "undefined" for set(key, undefined).
+    return json && json !== 'undefined' ? JSON.parse(json) : undefined;
   }
+
   watch<T>(key: string): Observable<T | undefined> {
     return new Observable<T | undefined>(subscriber => {
-      const json = this.storage.getItem(this.prefix + key);
-      const first = json ? JSON.parse(json) : undefined;
-      subscriber.next(first);
+      subscriber.next(this.get<T>(key));
 
       const eventEmitterCb = (value: T) => {
         subscriber.next(value);
@@ -59,7 +59,11 @@ export class StorageMemento implements Memento {
     });
   }
   set<T>(key: string, value: T): void {
-    this.storage.setItem(this.prefix + key, JSON.stringify(value));
+    if (value === undefined) {
+      this.storage.removeItem(this.prefix + key);
+    } else {
+      this.storage.setItem(this.prefix + key, JSON.stringify(value));
+    }
     this.eventEmitter.emit(key, value);
     this.channel.postMessage({ key, value });
   }
