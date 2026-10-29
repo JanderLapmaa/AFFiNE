@@ -91,6 +91,8 @@ The UI talks only to `TasksService` (workspace scope), behind the
   overlay: it settled on index signals unrelated to the write.
 - No flashing views: a doc is left out only when it is trashed, a template, or
   has no doc record.
+- Doc references in a todo's text arrive as `additional.refs` (see
+  [indexer.md](indexer.md)); `TaskRow.title` already has the titles filled in.
 - Pure rules live in `projection.ts` and `date.ts`; the clock is the
   injectable `TasksClockStore`. Tests: `__tests__/tasks-service.spec.ts`
   (Seam 1, built through `Framework`).

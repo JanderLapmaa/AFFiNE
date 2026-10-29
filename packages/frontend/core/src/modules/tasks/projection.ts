@@ -18,6 +18,8 @@ export interface IndexedTask {
   completedAt: number | null;
   heading: string | null;
   order: number | null;
+  /** Linked-doc references: UTF-16 offset of the placeholder in `title`, doc id. */
+  refs: [number, string][];
 }
 
 /** Doc-level data from the workspace doc records. */
@@ -36,6 +38,35 @@ const stringField = (value: unknown) =>
     : Array.isArray(value) && typeof value[0] === 'string'
       ? value[0]
       : null;
+
+const parseRefs = (value: unknown): [number, string][] =>
+  Array.isArray(value)
+    ? value.flatMap(ref =>
+        Array.isArray(ref) &&
+        Number.isInteger(ref[0]) &&
+        ref[0] >= 0 &&
+        typeof ref[1] === 'string'
+          ? [[ref[0], ref[1]] as [number, string]]
+          : []
+      )
+    : [];
+
+/**
+ * The text with each reference placeholder replaced by the title of the doc it
+ * links to. Offsets are UTF-16 (JS string indices), so replacing from the end
+ * keeps earlier ones valid.
+ */
+function titleWithRefs(
+  task: IndexedTask,
+  refTitles: ReadonlyMap<string, string>
+) {
+  let title = task.title;
+  for (const [offset, docId] of task.refs.toReversed()) {
+    if (offset >= title.length) continue;
+    title = `${title.slice(0, offset)}${refTitles.get(docId) ?? ''}${title.slice(offset + 1)}`;
+  }
+  return title;
+}
 
 /** Parses one index node's fields; returns null for anything that isn't a todo. */
 export function parseIndexedTask(
@@ -76,6 +107,7 @@ export function parseIndexedTask(
       typeof extra.order === 'number' && Number.isFinite(extra.order)
         ? extra.order
         : null,
+    refs: parseRefs(extra.refs),
   };
 }
 
@@ -88,13 +120,17 @@ interface Item {
 function buildItems(
   tasks: readonly IndexedTask[],
   docs: ReadonlyMap<string, DocInfo>,
-  today: string
+  today: string,
+  refTitles: ReadonlyMap<string, string>
 ): Item[] {
   const items: Item[] = [];
   for (const task of tasks) {
     const doc = docs.get(task.docId);
     // Trashed docs have no info, templates are not part of the task list.
     if (!doc || doc.template) continue;
+    // An empty todo (Enter after the last one) is not a task; one holding
+    // only a doc reference is not empty.
+    if (!task.title.trim() && !task.refs.length) continue;
     const completedAt = task.checked
       ? (task.completedAt ?? doc.updatedDate ?? doc.createDate ?? 0)
       : null;
@@ -103,7 +139,7 @@ function buildItems(
         id: `${task.docId}:${task.blockId}`,
         docId: task.docId,
         blockId: task.blockId,
-        title: task.title,
+        title: titleWithRefs(task, refTitles),
         due: task.due,
         priority: task.priority,
         checked: task.checked,
@@ -222,9 +258,10 @@ export function buildView(
   view: TasksViewId,
   tasks: readonly IndexedTask[],
   docs: ReadonlyMap<string, DocInfo>,
-  today: string
+  today: string,
+  refTitles: ReadonlyMap<string, string> = new Map()
 ): TaskGroup[] {
-  const items = buildItems(tasks, docs, today);
+  const items = buildItems(tasks, docs, today, refTitles);
 
   if (view === 'completed') {
     const days = groupBy(
@@ -294,7 +331,8 @@ export function buildCounts(
   docs: ReadonlyMap<string, DocInfo>,
   today: string
 ): TasksCounts {
-  const items = buildItems(tasks, docs, today);
+  // Counts don't use titles, so the empty refTitles map only affects them.
+  const items = buildItems(tasks, docs, today, new Map());
   const count = (view: TasksViewId) =>
     items.filter(i => !i.row.checked && isInView(view, i.row, today)).length;
   const inbox = count('inbox');

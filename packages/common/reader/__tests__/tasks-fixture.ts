@@ -23,6 +23,8 @@ interface Node {
   flavour: string;
   props?: Props;
   text?: string;
+  /** Rich text instead of `text` (Quill-style delta). */
+  delta?: { insert: string; attributes?: Record<string, unknown> }[];
   children?: Node[];
 }
 
@@ -33,6 +35,10 @@ const n = (
   text?: string,
   children: Node[] = []
 ): Node => ({ id, flavour, props, text, children });
+const ref = (pageId: string) => ({
+  insert: ' ',
+  attributes: { reference: { type: 'LinkedPage', pageId } },
+});
 const h = (id: string, type: string, text: string, children: Node[] = []) =>
   n(id, 'affine:paragraph', { type }, text, children);
 const todo = (id: string, text: string, props: Props = {}) =>
@@ -75,6 +81,18 @@ const tree: Node = n('page', 'affine:page', {}, 'Tasks fixture', [
       priority: 3n,
       completedAt: 1767225600000n,
     }),
+    todo('t-empty', ''),
+    {
+      ...todo('t-refs', ''),
+      delta: [
+        { insert: 'see ' },
+        ref('doc-b'),
+        { insert: ' and 😀 ' },
+        ref('doc-c'),
+        { insert: ' end' },
+      ],
+    },
+    { ...todo('t-ref-only', ''), delta: [ref('doc-d')] },
   ]),
 ]);
 
@@ -138,6 +156,23 @@ export const expectedTaskFields: Record<string, Record<string, unknown>> = {
   't-under-blank-heading': { listType: 'todo', checked: false, order: 18 },
   't-second-note': { listType: 'todo', checked: false, order: 20 },
   't-bigint': { listType: 'todo', checked: false, order: 21 },
+  't-empty': { listType: 'todo', checked: false, order: 22 },
+  // offsets are UTF-16: 'see ' is 4, then ' and 😀 ' is 8 (the emoji is 2)
+  't-refs': {
+    listType: 'todo',
+    checked: false,
+    order: 23,
+    refs: [
+      [4, 'doc-b'],
+      [13, 'doc-c'],
+    ],
+  },
+  't-ref-only': {
+    listType: 'todo',
+    checked: false,
+    order: 24,
+    refs: [[0, 'doc-d']],
+  },
 };
 
 // Y.Map#set rejects bigint, so integrate the item by hand (what a client
@@ -174,7 +209,11 @@ export function buildTasksDoc(): YDoc {
         if (typeof v === 'bigint') setBigInt(doc, block, `prop:${k}`, v);
         else block.set(`prop:${k}`, v);
       }
-      if (node.text !== undefined) {
+      if (node.delta) {
+        const text = new YText();
+        text.applyDelta(node.delta);
+        block.set('prop:text', text);
+      } else if (node.text !== undefined) {
         const key = node.flavour === 'affine:page' ? 'prop:title' : 'prop:text';
         block.set(key, new YText(node.text));
       }

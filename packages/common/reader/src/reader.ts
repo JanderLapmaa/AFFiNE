@@ -53,6 +53,8 @@ export interface BlockDocumentInfo {
     completedAt?: number;
     heading?: string;
     order?: number;
+    // [UTF-16 offset in `content`, doc id] per linked-doc reference
+    refs?: [number, string][];
   };
   yblock: YMap<any>;
   markdownPreview?: string;
@@ -66,17 +68,16 @@ const bookmarkFlavours = new Set([
   'affine:embed-loom',
 ]);
 
+const referencedDocId = (delta: DeltaInsert<AffineTextAttributes>) =>
+  delta.attributes?.reference?.pageId;
+
 const collectInlineReferences = (
   deltas: DeltaInsert<AffineTextAttributes>[]
 ): { refDocId: string; ref: string }[] =>
   uniqBy(
     deltas
       .flatMap(delta => {
-        if (
-          delta.attributes &&
-          delta.attributes.reference &&
-          delta.attributes.reference.pageId
-        ) {
+        if (referencedDocId(delta) && delta.attributes?.reference) {
           const { pageId: refDocId, params = {} } = delta.attributes.reference;
           return {
             refDocId,
@@ -574,6 +575,23 @@ function collectTodoHeadings(
   return result;
 }
 
+/**
+ * Linked-doc references in a todo's text as `[offset, docId]`, with the UTF-16
+ * offset of the reference's placeholder in the text. Embeds are not part of
+ * `Y.Text#toString()` (the indexed `content`), so they count as 0 units.
+ */
+function readTaskRefs(text: unknown): [number, string][] {
+  if (!(text instanceof YText)) return [];
+  const refs: [number, string][] = [];
+  let offset = 0;
+  for (const delta of text.toDelta() as DeltaInsert<AffineTextAttributes>[]) {
+    const pageId = referencedDocId(delta);
+    if (pageId) refs.push([offset, pageId]);
+    if (typeof delta.insert === 'string') offset += delta.insert.length;
+  }
+  return refs;
+}
+
 function readTaskFields(
   block: YMap<any>,
   walk: { heading: string; order: number } | undefined
@@ -581,6 +599,7 @@ function readTaskFields(
   const due = block.get('prop:due');
   const priority = block.get('prop:priority');
   const completedAt = block.get('prop:completedAt');
+  const refs = readTaskRefs(block.get('prop:text'));
   return {
     listType: 'todo',
     checked: block.get('prop:checked') === true,
@@ -591,6 +610,7 @@ function readTaskFields(
       : {}),
     ...(walk?.heading ? { heading: walk.heading } : {}),
     ...(walk ? { order: walk.order } : {}),
+    ...(refs.length ? { refs } : {}),
   };
 }
 

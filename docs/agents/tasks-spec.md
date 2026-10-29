@@ -167,6 +167,7 @@ Confirmed by the user while building:
 - **Inbox doc order:** "newest doc first" means newest by the doc's **created** date.
 - **Row order inside a group:** open tasks above completed ones; then priority high → low; then the TODO's position in its doc (`additional.order` from the indexer), then doc id for ties across docs.
 - **Checked tasks without `completedAt`** (ticked in an unmodified client, or imported/pasted as `[x]`): use the source doc's last-updated date as the completion time, for both the Completed grouping and the "crossed off until the end of the completion day" rule. `checked` stays the source of truth; a stale `completedAt` on an unchecked task is ignored.
+- **Empty todos and doc links (2026-10-29):** a todo with blank text and no doc reference is not a task (left out of rows and counts by the projection). A linked-doc reference in a todo's text is a `' '` placeholder, so both extractors record `refs: [offset, docId][]` (UTF-16 offsets) and the row title shows the linked doc's current title there (a journal doc shows its date).
 - **Index schema:** unchanged; the service queries `flavour: affine:list` and keeps `additional.listType === 'todo'` rows client-side (see [indexer.md](indexer.md)).
 
 ## Testing Decisions

@@ -52,15 +52,16 @@ Both extractors add task fields to the `additional` JSON of every
 `affine:list` block whose `prop:type` is `'todo'`; other blocks and the index
 schema are unchanged (query side: [tasks-spec.md](tasks-spec.md)).
 
-| Key           | Value             | Emitted when                                                                                                             |
-| ------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `listType`    | `'todo'`          | always (todo blocks only)                                                                                                |
-| `checked`     | boolean           | always; `prop:checked === true`, else `false`                                                                            |
-| `due`         | `'YYYY-MM-DD'`    | `prop:due` is a string matching `^\d{4}-\d{2}-\d{2}$`                                                                    |
-| `priority`    | `1` \| `2` \| `3` | `prop:priority` is an integer 1-3 (0 = none, omitted)                                                                    |
-| `completedAt` | epoch ms          | `prop:completedAt` is a finite number                                                                                    |
-| `heading`     | string            | a heading exists above the block (rule below) and its trimmed text is non-empty                                          |
-| `order`       | integer           | the block is reachable in the heading walk (below): its 0-based position among all blocks visited in that pre-order walk |
+| Key           | Value                | Emitted when                                                                                                                                                                     |
+| ------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `listType`    | `'todo'`             | always (todo blocks only)                                                                                                                                                        |
+| `checked`     | boolean              | always; `prop:checked === true`, else `false`                                                                                                                                    |
+| `due`         | `'YYYY-MM-DD'`       | `prop:due` is a string matching `^\d{4}-\d{2}-\d{2}$`                                                                                                                            |
+| `priority`    | `1` \| `2` \| `3`    | `prop:priority` is an integer 1-3 (0 = none, omitted)                                                                                                                            |
+| `completedAt` | epoch ms             | `prop:completedAt` is a finite number                                                                                                                                            |
+| `heading`     | string               | a heading exists above the block (rule below) and its trimmed text is non-empty                                                                                                  |
+| `order`       | integer              | the block is reachable in the heading walk (below): its 0-based position among all blocks visited in that pre-order walk                                                         |
+| `refs`        | `[number, string][]` | the text has linked-doc references: `[offset, docId]` per reference, offset in UTF-16 units into `content` (the placeholder `' '`; embeds are not in `content`, so they count 0) |
 
 Numbers must be plain numbers: a Yjs bigint value is rejected (key omitted)
 on both sides. Keys whose condition fails are omitted, never `null`. Existing keys

@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use serde_json::{Map as JsonMap, Number, Value as JsonValue};
-use y_octo::{Any, Doc, DocOptions, Map, Value};
+use y_octo::{Any, Doc, DocOptions, Map, TextDeltaOp, TextInsert, Value};
 
 use super::NativeBlockInfo;
 
@@ -156,7 +156,44 @@ fn todo_fields(block: &Map, heading: Option<&str>, order: Option<u64>) -> Option
   if let Some(order) = order {
     fields.insert("order".into(), JsonValue::from(order));
   }
+  let refs = doc_refs(block);
+  if !refs.is_empty() {
+    fields.insert("refs".into(), JsonValue::Array(refs));
+  }
   Some(fields)
+}
+
+/// Linked-doc references in the block's text as `[offset, docId]`, with the
+/// UTF-16 offset of the placeholder in the text (like the JS extractor; embeds
+/// are not part of the text, so they count as 0 units).
+fn doc_refs(block: &Map) -> Vec<JsonValue> {
+  let Some(Value::Text(text)) = block.get("prop:text") else {
+    return Vec::new();
+  };
+  let mut refs = Vec::new();
+  let mut offset: u64 = 0;
+  for op in text.to_delta() {
+    let TextDeltaOp::Insert { insert, format } = op else {
+      continue;
+    };
+    let page_id = match format.as_ref().and_then(|format| format.get("reference")) {
+      Some(Any::Object(reference)) => match reference.get("pageId") {
+        Some(Any::String(page_id)) if !page_id.is_empty() => Some(page_id.clone()),
+        _ => None,
+      },
+      _ => None,
+    };
+    if let Some(page_id) = page_id {
+      refs.push(JsonValue::Array(vec![
+        JsonValue::from(offset),
+        JsonValue::String(page_id),
+      ]));
+    }
+    if let TextInsert::Text(text) = insert {
+      offset += text.encode_utf16().count() as u64;
+    }
+  }
+  refs
 }
 
 /// `^\d{4}-\d{2}-\d{2}$` (ASCII digits only).

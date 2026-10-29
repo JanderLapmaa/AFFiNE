@@ -1,3 +1,4 @@
+import { I18n, i18nTime } from '@affine/i18n';
 import { readTodoBlocks } from '@affine/reader';
 import { setTodoChecked } from '@blocksuite/affine/blocks/list';
 import type { ListBlockModel } from '@blocksuite/affine/model';
@@ -23,6 +24,7 @@ import type { Doc as YDoc } from 'yjs';
 
 import type { Doc } from '../../doc/entities/doc';
 import type { DocsService } from '../../doc/services/docs';
+import type { JournalService } from '../../journal';
 import type { WorkspaceService } from '../../workspace';
 import { localDay, msUntilNextLocalMidnight } from '../date';
 import {
@@ -96,6 +98,8 @@ type Patch = Partial<TaskValues>;
 interface Model {
   tasks: IndexedTask[];
   docs: ReadonlyMap<string, DocInfo>;
+  /** Current titles of the docs that tasks link to. */
+  refTitles: ReadonlyMap<string, string>;
   today: string;
 }
 
@@ -167,7 +171,8 @@ export class TasksService extends Service {
   constructor(
     private readonly workspaceService: WorkspaceService,
     private readonly docsService: DocsService,
-    private readonly clockStore: TasksClockStore
+    private readonly clockStore: TasksClockStore,
+    private readonly journalService: JournalService
   ) {
     super();
 
@@ -283,8 +288,54 @@ export class TasksService extends Service {
       distinctUntilChanged(isEqual)
     );
 
-    this.model$ = combineLatest([this.tasks$, docInfo$, this.today$]).pipe(
-      map(([tasks, docs, today]) => ({ tasks, docs, today })),
+    // Titles of linked docs, kept current so a rename shows in the rows.
+    const refIds$: Observable<string[]> = this.tasks$.pipe(
+      map(rows =>
+        [...new Set(rows.flatMap(r => r.refs.map(ref => ref[1])))].sort()
+      ),
+      distinctUntilChanged(isEqual)
+    );
+    // A journal doc shows its date, like the doc title elsewhere.
+    const refJournalDates$: Observable<(string | undefined)[]> = refIds$.pipe(
+      switchMap(ids =>
+        ids.length
+          ? combineLatest(
+              ids.map(id => this.journalService.journalDate$(id).asObservable())
+            )
+          : of([])
+      )
+    );
+    const refTitles$: Observable<ReadonlyMap<string, string>> = combineLatest([
+      refIds$,
+      refJournalDates$,
+      this.docsService.allDocTitle$(),
+    ]).pipe(
+      map(([ids, dates, titles]) => {
+        const titleOf = new Map(titles.map(d => [d.id, d.title]));
+        return new Map(
+          ids.map((id, i): [string, string] => [
+            id,
+            (dates[i]
+              ? i18nTime(dates[i], { absolute: { accuracy: 'day' } })
+              : titleOf.get(id)) || I18n.t('Untitled'),
+          ])
+        );
+      }),
+      distinctUntilChanged(isEqual)
+    );
+
+    this.model$ = combineLatest([
+      this.tasks$,
+      docInfo$,
+      refTitles$,
+      this.today$,
+    ]).pipe(
+      map(([tasks, docs, refTitles, today]) => ({
+        tasks,
+        docs,
+        refTitles,
+        today,
+      })),
       shareReplay({ bufferSize: 1, refCount: true })
     );
 
@@ -479,8 +530,8 @@ export class TasksService extends Service {
     if (!view) {
       view = LiveData.from(
         this.model$.pipe(
-          map(({ tasks, docs, today }) =>
-            buildView(viewId, tasks, docs, today)
+          map(({ tasks, docs, refTitles, today }) =>
+            buildView(viewId, tasks, docs, today, refTitles)
           ),
           distinctUntilChanged(isEqual)
         ),

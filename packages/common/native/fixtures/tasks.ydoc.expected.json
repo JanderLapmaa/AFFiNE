@@ -77,5 +77,36 @@
     "listType": "todo",
     "checked": false,
     "order": 21
+  },
+  "t-empty": {
+    "listType": "todo",
+    "checked": false,
+    "order": 22
+  },
+  "t-refs": {
+    "listType": "todo",
+    "checked": false,
+    "order": 23,
+    "refs": [
+      [
+        4,
+        "doc-b"
+      ],
+      [
+        13,
+        "doc-c"
+      ]
+    ]
+  },
+  "t-ref-only": {
+    "listType": "todo",
+    "checked": false,
+    "order": 24,
+    "refs": [
+      [
+        0,
+        "doc-d"
+      ]
+    ]
   }
 }

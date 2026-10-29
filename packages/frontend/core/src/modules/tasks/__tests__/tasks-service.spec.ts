@@ -5,6 +5,7 @@ import {
   BehaviorSubject,
   map,
   type Observable,
+  of,
   type Subscription,
   throwError,
 } from 'rxjs';
@@ -12,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Array as YArray, Doc as YDoc, Map as YMap, Text as YText } from 'yjs';
 
 import { DocsService } from '../../doc/services/docs';
+import { JournalService } from '../../journal';
 import { WorkspaceService } from '../../workspace';
 import { TasksService } from '../services/tasks';
 import { TasksClockStore } from '../services/tasks-clock';
@@ -35,6 +37,7 @@ interface TaskSpec {
   heading?: string;
   title?: string;
   listType?: string;
+  refs?: [number, string][];
 }
 
 function node(spec: TaskSpec) {
@@ -42,7 +45,14 @@ function node(spec: TaskSpec) {
     listType: spec.listType ?? 'todo',
     checked: spec.checked ?? false,
   };
-  for (const key of ['due', 'priority', 'completedAt', 'order', 'heading']) {
+  for (const key of [
+    'due',
+    'priority',
+    'completedAt',
+    'order',
+    'heading',
+    'refs',
+  ]) {
     const value = spec[key as keyof TaskSpec];
     if (value !== undefined) additional[key] = value;
   }
@@ -118,6 +128,8 @@ function setup(
     /** blocks that exist in the source docs: `docId:blockId` -> props */
     blocks?: Record<string, Record<string, unknown>>;
     indexerState?: Record<string, unknown> | null;
+    /** journal dates by doc id */
+    journals?: Record<string, string>;
   } = {}
 ) {
   const clock = { now: vi.fn(() => options.now ?? NOON) };
@@ -285,11 +297,21 @@ function setup(
     () => ({ workspace: { engine: { indexer } } }) as never
   );
   framework.service(DocsService, () => docsService as never);
+  framework.service(
+    JournalService,
+    () =>
+      ({
+        journalDate$: (id: string) => ({
+          asObservable: () => of(options.journals?.[id]),
+        }),
+      }) as never
+  );
   framework.store(TasksClockStore, () => clock as never);
   framework.service(TasksService, [
     WorkspaceService,
     DocsService,
     TasksClockStore,
+    JournalService,
   ]);
   return {
     service: framework.provider().get(TasksService),
@@ -531,6 +553,70 @@ describe('view membership and grouping', () => {
       completed: 1,
     });
     expect(watch(env.service.inboxCount$).value).toBe(2);
+  });
+});
+
+describe('empty todos and doc references', () => {
+  it('leaves out empty and whitespace-only todos, and the counts follow', () => {
+    const env = setup({
+      tasks: [
+        { blockId: 'real', title: 'real' },
+        { blockId: 'empty', title: '' },
+        { blockId: 'blank', title: '  	' },
+        { blockId: 'dated-empty', title: '', due: '2026-10-28' },
+        { blockId: 'ref-only', title: ' ', refs: [[0, 'doc-b']] },
+      ],
+    });
+    expect(blockIds(viewOf(env, 'all').value)).toEqual(['real', 'ref-only']);
+    expect(watch(env.service.counts$).value.inbox).toBe(2);
+  });
+
+  it('shows a linked journal doc as its date', () => {
+    const env = setup({
+      docs: [{ id: 'doc-a' }, { id: 'doc-j', title: '' }],
+      journals: { 'doc-j': '2026-10-27' },
+      tasks: [{ blockId: 'j', title: ' ', refs: [[0, 'doc-j']] }],
+    });
+    const [row] = viewOf(env, 'inbox').value.flatMap(g => g.rows);
+    expect(row.title).toMatch(/2026|27/);
+    expect(row.title).not.toBe('Untitled');
+  });
+
+  it('shows the linked doc title at each placeholder, and follows renames', () => {
+    const env = setup({
+      docs: [
+        { id: 'doc-a', title: 'Doc A' },
+        { id: 'doc-b', title: 'Beta' },
+        { id: 'doc-c', title: '' },
+      ],
+      tasks: [
+        // "see ${ref} and 😀 ${ref} end": the emoji is two UTF-16 units
+        {
+          blockId: 'linked',
+          title: 'see   and 😀   end',
+          refs: [
+            [4, 'doc-b'],
+            [13, 'doc-c'],
+          ],
+        },
+        { blockId: 'gone', title: ' ', refs: [[0, 'doc-missing']] },
+      ],
+    });
+    const view = viewOf(env, 'inbox');
+    const titles = () =>
+      Object.fromEntries(
+        view.value.flatMap(g => g.rows).map(r => [r.blockId, r.title])
+      );
+    expect(titles()).toEqual({
+      linked: 'see Beta and 😀 Untitled end',
+      gone: 'Untitled',
+    });
+    env.docs$.next([
+      { id: 'doc-a', title: 'Doc A' },
+      { id: 'doc-b', title: 'Renamed' },
+      { id: 'doc-c', title: 'C' },
+    ]);
+    expect(titles().linked).toBe('see Renamed and 😀 C end');
   });
 });
 

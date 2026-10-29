@@ -28,7 +28,7 @@ export interface TaskRow {
   id: string;
   docId: string;
   blockId: string;
-  /** The block's plain text. */
+  /** The block's text, with each linked-doc reference shown as that doc's title. */
   title: string;
   /** `YYYY-MM-DD` local calendar day */
   due: string | null;

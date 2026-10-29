@@ -252,6 +252,7 @@ const TASK_KEYS = [
   'completedAt',
   'heading',
   'order',
+  'refs',
 ] as const;
 
 test('should read task fields from todo list blocks', async () => {

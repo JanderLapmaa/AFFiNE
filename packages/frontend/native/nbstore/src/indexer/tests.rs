@@ -320,7 +320,7 @@ async fn failed_atomic_commit_keeps_index_dirty_and_clock_unadvanced() {
   cleanup(&db_path).await;
 }
 
-const TASK_KEYS: [&str; 7] = [
+const TASK_KEYS: [&str; 8] = [
   "listType",
   "checked",
   "due",
@@ -328,6 +328,7 @@ const TASK_KEYS: [&str; 7] = [
   "completedAt",
   "heading",
   "order",
+  "refs",
 ];
 
 async fn crawl_snapshot(bin: &[u8]) -> NativeCrawlResult {

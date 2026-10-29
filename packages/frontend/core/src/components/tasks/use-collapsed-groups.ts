@@ -34,7 +34,8 @@ export function useCollapsedGroups(view: TasksViewId) {
       const next = current.includes(groupKey)
         ? current.filter(k => k !== groupKey)
         : [...current, groupKey];
-      localState.set(storageKey, next.length ? next : undefined);
+      if (next.length) localState.set(storageKey, next);
+      else localState.del(storageKey);
     },
     [localState, storageKey]
   );
