@@ -78,15 +78,19 @@ The UI talks only to `TasksService` (workspace scope), behind the
   reject.
 - Inbox = no due date (a priority alone keeps a task there). The All view is
   Scheduled / Inbox.
-- Changes show at once through an optimistic overlay. An entry holds its
-  patch until the write resolves and the workspace indexer's
-  `waitForDocCompleted(docId)` resolves or 10 s pass (a paused indexer never
-  completes), and is dropped on the next search emission after that. A failed
-  write rolls back only its own keys.
+- The index only finds todo blocks and gives cold values. A write opens the
+  source doc (`DocsService.open`, waiting only for the local load) and holds
+  it until the index shows the same rows for it (30 s cap with a warning for
+  an index that never catches up; also released on dispose). A held doc's
+  rows are read live from its Yjs doc with `readTodoBlocks` from
+  `@affine/reader` (the indexer's task-field extraction), right after our
+  write and throttled (100 ms) on other changes, and replace its indexed rows,
+  so a change shows as soon as the doc has it and a failed write shows the doc
+  unchanged. Writes run one at a time and decide from the block
+  as it is then (a quick second tick undoes the first). There is no optimistic
+  overlay: it settled on index signals unrelated to the write.
 - No flashing views: a doc is left out only when it is trashed, a template, or
-  has no doc record. While one of our own writes to a doc is pending (max 10 s),
-  a doc whose rows shrank keeps its previous rows, because re-indexing deletes
-  and then re-inserts a doc's blocks.
+  has no doc record.
 - Pure rules live in `projection.ts` and `date.ts`; the clock is the
   injectable `TasksClockStore`. Tests: `__tests__/tasks-service.spec.ts`
   (Seam 1, built through `Framework`).

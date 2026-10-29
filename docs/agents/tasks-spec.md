@@ -158,6 +158,8 @@ non-trashed, non-template doc in the workspace.
 
 Confirmed by the user while building:
 
+- **After the desktop re-test (2026-10-29):** Tasks opens on **Today** by default. Values right after a change come from the live doc, not the index: the index only discovers todo blocks (and gives cold values); docs written from the Tasks view stay open, and their rows are read live, until the index shows the same rows (30 s cap). No optimistic overlay; details in [todo-view.md](todo-view.md).
+
 - **After the desktop hand-test (2026-10-29):** Inbox = no date; a priority alone keeps a task in Inbox (stories 12, 17, 27 updated; the All view's "No date (priority only)" group is gone). The desktop inner nav is always visible, no collapse toggle (story 29). The detail panel must keep showing a task after triage moves it out of the current view, so date and priority can be set in one go.
 
 - **Inbox doc order:** "newest doc first" means newest by the doc's **created** date.

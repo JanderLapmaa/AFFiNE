@@ -1,3 +1,4 @@
+import { readTodoBlocks } from '@affine/reader';
 import { setTodoChecked } from '@blocksuite/affine/blocks/list';
 import type { ListBlockModel } from '@blocksuite/affine/model';
 import type { Store } from '@blocksuite/affine/store';
@@ -18,7 +19,9 @@ import {
   switchMap,
   tap,
 } from 'rxjs';
+import type { Doc as YDoc } from 'yjs';
 
+import type { Doc } from '../../doc/entities/doc';
 import type { DocsService } from '../../doc/services/docs';
 import type { WorkspaceService } from '../../workspace';
 import { localDay, msUntilNextLocalMidnight } from '../date';
@@ -43,8 +46,11 @@ import type { TasksClockStore } from './tasks-clock';
 // memory-indexer rejects a search where skip + limit exceeds this.
 const INDEXER_WINDOW = 10_000;
 
-// How long a wait for the indexer, or a hold on a doc's rows, may last.
-const INDEX_WAIT_MS = 10_000;
+// How long a doc we wrote to stays open when the index doesn't catch up.
+const HOLD_CAP_MS = 30_000;
+
+// Re-reads of a held doc on its own changes (typing, sync) are throttled.
+const READ_THROTTLE_MS = 100;
 
 // Batches stay under the window so docs growing meanwhile still fit.
 const BATCH_SIZE = 9000;
@@ -87,30 +93,28 @@ interface TaskValues {
 
 type Patch = Partial<TaskValues>;
 
-/**
- * Optimistic values for one task. The entry keeps its patch until its writes
- * are done and the indexer has processed the doc, then goes at the next rows$
- * emission after that.
- */
-interface OverlayEntry {
-  docId: string;
-  /** When the last write started, for the hold cap. */
-  since: number;
-  patch: Patch;
-  /** Writes started and not yet indexed. */
-  writes: number;
-  /** `rowsSeq` when the last write was indexed; null while writing. */
-  settledAt: number | null;
-}
-
 interface Model {
   tasks: IndexedTask[];
   docs: ReadonlyMap<string, DocInfo>;
   today: string;
 }
 
-const taskId = (task: { docId: string; blockId: string }) =>
-  `${task.docId}:${task.blockId}`;
+/**
+ * A doc held open because the Tasks view wrote to it. Its rows are read from
+ * the doc itself, so the view shows what the doc holds, not the index.
+ */
+interface LiveDoc {
+  doc: Doc;
+  release: () => void;
+  /** Resolves once the doc is loaded from local storage and was read. */
+  ready: Promise<void>;
+  /** Rows read from the doc; null until it is loaded. */
+  rows: IndexedTask[] | null;
+  /** Writes running. */
+  writes: number;
+  timer?: ReturnType<typeof setTimeout>;
+  detach?: () => void;
+}
 
 function splitTaskId(id: string) {
   const at = id.indexOf(':');
@@ -120,55 +124,21 @@ function splitTaskId(id: string) {
   return { docId: id.slice(0, at), blockId: id.slice(at + 1) };
 }
 
-function valuesOf(task: IndexedTask): TaskValues {
-  return {
-    due: task.due,
-    priority: task.priority,
-    checked: task.checked,
-    completedAt: task.completedAt,
-  };
+/** A doc's todo rows, read with the indexer's extraction. */
+function readLiveRows(docId: string, ydoc: YDoc): IndexedTask[] {
+  return readTodoBlocks(ydoc).flatMap(block => {
+    const task = parseIndexedTask({
+      docId,
+      blockId: block.blockId,
+      content: block.content,
+      additional: JSON.stringify(block.additional),
+    });
+    return task ? [task] : [];
+  });
 }
 
-function applyPatch(task: IndexedTask, patch: Patch): IndexedTask {
-  const next = { ...task };
-  if (patch.due !== undefined) next.due = patch.due;
-  if (patch.priority !== undefined) next.priority = patch.priority;
-  if (patch.checked !== undefined) {
-    next.checked = patch.checked;
-    next.completedAt = patch.checked ? (patch.completedAt ?? null) : null;
-  }
-  return next;
-}
-
-function countByDoc(rows: IndexedTask[]) {
-  const counts = new Map<string, number>();
-  for (const row of rows)
-    counts.set(row.docId, (counts.get(row.docId) ?? 0) + 1);
-  return counts;
-}
-
-/**
- * A doc we just wrote to is re-indexed by deleting its blocks and inserting
- * them again, and a query in between would show its tasks as gone. Such a
- * doc (`held`) keeps its previous rows while its row count shrinks.
- */
-function holdShrunkDocs(
-  prev: IndexedTask[],
-  next: IndexedTask[],
-  held: ReadonlySet<string>
-): IndexedTask[] {
-  if (!held.size) return next;
-  const after = countByDoc(next);
-  const shrunk = new Set<string>();
-  for (const [docId, n] of countByDoc(prev)) {
-    if (held.has(docId) && n > (after.get(docId) ?? 0)) shrunk.add(docId);
-  }
-  if (!shrunk.size) return next;
-  return [
-    ...next.filter(row => !shrunk.has(row.docId)),
-    ...prev.filter(row => shrunk.has(row.docId)),
-  ];
-}
+const byBlockId = (rows: IndexedTask[]) =>
+  rows.toSorted((a, b) => (a.blockId < b.blockId ? -1 : 1));
 
 function writeProp(
   store: Store,
@@ -188,9 +158,10 @@ function writeProp(
 }
 
 /**
- * Cross-doc task list: reads todo blocks from the block indexer, shapes them
- * into the Tasks views, and writes due / priority / checked back into the
- * source doc's list block.
+ * Cross-doc task list: finds todo blocks through the block indexer, shapes
+ * them into the Tasks views, and writes due / priority / checked back into the
+ * source doc's list block. A doc we write to is read live until the index
+ * shows the same rows (see `applyValues`).
  */
 export class TasksService extends Service {
   constructor(
@@ -220,10 +191,6 @@ export class TasksService extends Service {
                 return task ? [task] : [];
               })
             ),
-            scan(
-              (prev, next) => holdShrunkDocs(prev, next, this.heldDocs()),
-              [] as IndexedTask[]
-            ),
             catchError((error: unknown) => {
               this.queryError$.next(
                 error instanceof Error ? error.message : String(error)
@@ -232,10 +199,26 @@ export class TasksService extends Service {
             })
           );
       }),
-      tap(() => {
-        this.rowsSeq++;
+      tap(rows => {
+        this.indexRows = rows;
         // After this emission reached the views, not during it.
-        queueMicrotask(() => this.dropSettledOverlays());
+        queueMicrotask(() => {
+          for (const docId of this.live.keys()) this.releaseIfCaughtUp(docId);
+        });
+      }),
+      shareReplay({ bufferSize: 1, refCount: true })
+    );
+
+    // A doc held open shows its own rows in place of the indexed ones.
+    this.tasks$ = combineLatest([this.rows$, this.liveChanged$]).pipe(
+      map(([rows]) => {
+        const live = [...this.live].filter(([, doc]) => doc.rows);
+        if (!live.length) return rows;
+        const held = new Set(live.map(([docId]) => docId));
+        return [
+          ...rows.filter(r => !held.has(r.docId)),
+          ...live.flatMap(([, doc]) => doc.rows ?? []),
+        ];
       }),
       shareReplay({ bufferSize: 1, refCount: true })
     );
@@ -243,7 +226,7 @@ export class TasksService extends Service {
     // Only docs that hold tasks matter, and a doc's updated date only when a
     // checked task there has no completedAt. Typing in a doc therefore
     // doesn't change the result (and so doesn't rebuild the views).
-    const relevantDocs$ = this.rows$.pipe(
+    const relevantDocs$ = this.tasks$.pipe(
       map(rows => ({
         docIds: [...new Set(rows.map(r => r.docId))].sort(),
         needUpdated: [
@@ -300,20 +283,8 @@ export class TasksService extends Service {
       distinctUntilChanged(isEqual)
     );
 
-    this.model$ = combineLatest([
-      this.rows$,
-      docInfo$,
-      this.overlay$,
-      this.today$,
-    ]).pipe(
-      map(([rows, docs, overlay, today]) => ({
-        tasks: rows.map(row => {
-          const entry = overlay.get(taskId(row));
-          return entry ? applyPatch(row, entry.patch) : row;
-        }),
-        docs,
-        today,
-      })),
+    this.model$ = combineLatest([this.tasks$, docInfo$, this.today$]).pipe(
+      map(([tasks, docs, today]) => ({ tasks, docs, today })),
       shareReplay({ bufferSize: 1, refCount: true })
     );
 
@@ -446,16 +417,21 @@ export class TasksService extends Service {
 
   private readonly retry$ = new BehaviorSubject(0);
   private readonly queryError$ = new BehaviorSubject<string | null>(null);
-  private readonly overlay$ = new BehaviorSubject<
-    ReadonlyMap<string, OverlayEntry>
-  >(new Map());
-  /** Counts rows$ emissions, so an overlay can wait for "the next one". */
-  private rowsSeq = 0;
   private writeQueue: Promise<unknown> = Promise.resolve();
   private readonly views = new Map<TasksViewId, LiveData<TaskGroup[]>>();
 
   /** Todo rows from the index (parsed, not yet filtered by doc state). */
   private readonly rows$: Observable<IndexedTask[]>;
+  /** The latest index rows, to tell when the index has caught up. */
+  private indexRows: IndexedTask[] = [];
+
+  /** Docs held open after a write, by doc id. */
+  private readonly live = new Map<string, LiveDoc>();
+  /** Emits when a held doc's rows change or a doc is let go. */
+  private readonly liveChanged$ = new BehaviorSubject<void>(undefined);
+
+  /** Index rows, with a held doc's rows replaced by the doc's own. */
+  private readonly tasks$: Observable<IndexedTask[]>;
 
   /** The local calendar day. Advances at midnight and on wake-up. */
   private readonly today$ = new Observable<string>(subscriber => {
@@ -549,57 +525,65 @@ export class TasksService extends Service {
     }));
   }
 
+  override dispose() {
+    for (const docId of this.live.keys()) this.releaseDoc(docId);
+    super.dispose();
+  }
+
   /**
-   * Optimistic write: shows `decide(current values)` right away, then writes
-   * the same decision to the source doc (serialised). A failed write takes
-   * the optimistic values back.
+   * Writes `decide(the block's current values)` to the source doc. Writes run
+   * one at a time, and each decides from the doc as it is when its turn
+   * comes, so a quick second tick undoes the first. The doc stays open until
+   * the index shows what the doc holds, and its rows are read from the doc
+   * meanwhile: a change shows as soon as the doc has it, and a failed write
+   * shows the doc unchanged.
    */
   private applyValues(
     id: string,
     decide: (before: TaskValues) => Patch
   ): Promise<TasksUndo> {
-    let ref: { docId: string; blockId: string };
-    try {
-      ref = splitTaskId(id);
-    } catch (error) {
-      return Promise.reject(error);
-    }
-    const row = this.rawRow(id);
-    const entry = this.overlay$.value.get(id);
-    const shown = row && (entry ? applyPatch(row, entry.patch) : row);
-    const optimistic = shown && decide(valuesOf(shown));
-    const prevPatch = optimistic
-      ? this.startOverlay(id, ref.docId, optimistic)
-      : {};
-
     const run = this.writeQueue
       .catch(() => {})
       .then(async (): Promise<TasksUndo> => {
+        const ref = splitTaskId(id);
+        const record = this.docsService.list.doc$(ref.docId).value;
+        if (!record || record.trash$.value) {
+          throw new Error(`Doc ${ref.docId} is trashed or missing`);
+        }
+        const live = this.holdDoc(ref.docId);
         try {
-          const { before, changes } = await this.writeBlock(
-            ref,
-            (store, model) => {
-              const before: TaskValues = {
-                due: model.props.due ?? null,
-                priority: (model.props.priority ?? 0) as TaskPriority,
-                checked: model.props.checked === true,
-                completedAt: model.props.completedAt ?? null,
-              };
-              const changes = decide(before);
-              if (changes.due !== undefined) {
-                writeProp(store, model, 'due', changes.due);
-              }
-              if (changes.priority !== undefined) {
-                writeProp(store, model, 'priority', changes.priority || null);
-              }
-              if (changes.checked !== undefined) {
-                const at = changes.completedAt ?? this.clock.now();
-                setTodoChecked(store, model, changes.checked, at);
-              }
-              return { before, changes };
-            }
-          );
-          if (optimistic) this.settleOverlay(id, ref.docId).catch(() => {});
+          await live.ready;
+          const store = live.doc.blockSuiteDoc;
+          if (store.readonly) {
+            throw new Error(`Doc ${ref.docId} is read-only`);
+          }
+          const model = store.getBlock(ref.blockId)?.model as
+            | ListBlockModel
+            | undefined;
+          if (!model || model.flavour !== 'affine:list') {
+            throw new Error(
+              `Task block not found: ${ref.docId}:${ref.blockId}`
+            );
+          }
+          const before: TaskValues = {
+            due: model.props.due ?? null,
+            priority: (model.props.priority ?? 0) as TaskPriority,
+            checked: model.props.checked === true,
+            completedAt: model.props.completedAt ?? null,
+          };
+          const changes = decide(before);
+          if (changes.due !== undefined) {
+            writeProp(store, model, 'due', changes.due);
+          }
+          if (changes.priority !== undefined) {
+            writeProp(store, model, 'priority', changes.priority || null);
+          }
+          if (changes.checked !== undefined) {
+            const at = changes.completedAt ?? this.clock.now();
+            setTodoChecked(store, model, changes.checked, at);
+          }
+          // Shown now, not at the next throttled read.
+          this.readLive(ref.docId, live);
           // Only what this write changed is written back.
           const previous: Patch = {};
           for (const key of Object.keys(changes) as (keyof TaskValues)[]) {
@@ -608,130 +592,105 @@ export class TasksService extends Service {
           return async () => {
             await this.applyValues(id, () => previous);
           };
-        } catch (error) {
-          if (optimistic) this.failOverlay(id, optimistic, prevPatch);
-          throw error;
+        } finally {
+          live.writes--;
+          this.releaseIfCaughtUp(ref.docId);
         }
       });
     this.writeQueue = run;
     return run;
   }
 
-  /** Opens the source doc, runs `fn` on the block's model, releases the doc. */
-  private async writeBlock<T>(
-    ref: { docId: string; blockId: string },
-    fn: (store: Store, model: ListBlockModel) => T
-  ): Promise<T> {
-    const record = this.docsService.list.doc$(ref.docId).value;
-    if (!record || record.trash$.value) {
-      throw new Error(`Doc ${ref.docId} is trashed or missing`);
+  /** Opens the doc (or keeps it open) for one more write. */
+  private holdDoc(docId: string): LiveDoc {
+    let live = this.live.get(docId);
+    if (!live) {
+      const { doc, release } = this.docsService.open(docId);
+      live = { doc, release, ready: Promise.resolve(), rows: null, writes: 0 };
+      this.live.set(docId, live);
+      live.ready = this.loadLiveDoc(docId, live);
     }
-    const { doc, release } = this.docsService.open(ref.docId);
-    try {
-      const stopPriorityLoad = doc.addPriorityLoad(10);
-      try {
-        await doc.waitForSyncReady();
-      } finally {
-        stopPriorityLoad();
-      }
-      const store = doc.blockSuiteDoc;
-      if (store.readonly) {
-        throw new Error(`Doc ${ref.docId} is read-only`);
-      }
-      const model = store.getBlock(ref.blockId)?.model as
-        | ListBlockModel
-        | undefined;
-      if (!model || model.flavour !== 'affine:list') {
-        throw new Error(`Task block not found: ${ref.docId}:${ref.blockId}`);
-      }
-      return fn(store, model);
-    } finally {
-      release();
-    }
-  }
-
-  /** Docs with a recent write of ours still waiting to show in the index. */
-  private heldDocs() {
-    const now = Date.now();
-    const docs = new Set<string>();
-    for (const entry of this.overlay$.value.values()) {
-      if (now - entry.since < INDEX_WAIT_MS) docs.add(entry.docId);
-    }
-    return docs;
-  }
-
-  /** Returns the patch the entry had before, for `failOverlay`. */
-  private startOverlay(id: string, docId: string, patch: Patch) {
-    const entries = new Map(this.overlay$.value);
-    const existing = entries.get(id);
-    entries.set(id, {
-      docId,
-      since: Date.now(),
-      patch: { ...existing?.patch, ...patch },
-      writes: (existing?.writes ?? 0) + 1,
-      settledAt: null,
-    });
-    this.overlay$.next(entries);
-    return existing?.patch ?? {};
+    live.writes++;
+    clearTimeout(live.timer);
+    live.timer = undefined;
+    return live;
   }
 
   /**
-   * The write is done; the entry goes at the first rows$ emission after the
-   * indexer has processed the doc, or after `INDEX_WAIT_MS` (it doesn't while
-   * paused, in battery-save mode, or if the doc is never indexed).
+   * Waits for the local load only (`waitForSyncReady` is the doc frontend's
+   * load from local storage, not a server sync), then reads the doc's rows
+   * now and, throttled, on every change.
    */
-  private async settleOverlay(id: string, docId: string) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
+  private async loadLiveDoc(docId: string, live: LiveDoc) {
+    const stopPriorityLoad = live.doc.addPriorityLoad(10);
     try {
-      await Promise.race([
-        this.indexer.waitForDocCompleted(docId),
-        new Promise<void>(resolve => {
-          timer = setTimeout(resolve, INDEX_WAIT_MS);
-        }),
-      ]);
+      await live.doc.waitForSyncReady();
     } finally {
-      clearTimeout(timer);
-      this.endWrite(id);
+      stopPriorityLoad();
     }
-  }
-
-  /** One write of the entry is over; with none left it can be dropped. */
-  private endWrite(id: string) {
-    const entry = this.overlay$.value.get(id);
-    if (!entry) return;
-    entry.writes--;
-    if (entry.writes === 0) entry.settledAt = this.rowsSeq;
-  }
-
-  private dropSettledOverlays() {
-    const entries = new Map(this.overlay$.value);
-    for (const [id, entry] of entries) {
-      if (entry.settledAt !== null && entry.settledAt < this.rowsSeq) {
-        entries.delete(id);
+    // Not when it was let go meanwhile.
+    if (this.live.get(docId) !== live) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let dirty = false;
+    const onUpdate = () => {
+      if (timer) {
+        dirty = true;
+        return;
       }
-    }
-    if (entries.size !== this.overlay$.value.size) this.overlay$.next(entries);
+      this.readLive(docId, live);
+      timer = setTimeout(() => {
+        timer = undefined;
+        if (dirty) {
+          dirty = false;
+          onUpdate();
+        }
+      }, READ_THROTTLE_MS);
+    };
+    const yDoc = live.doc.yDoc;
+    yDoc.on('update', onUpdate);
+    live.detach = () => {
+      clearTimeout(timer);
+      yDoc.off('update', onUpdate);
+    };
+    this.readLive(docId, live);
   }
 
-  /** Takes back this write's keys only, to what they were before it. */
-  private failOverlay(id: string, patch: Patch, before: Patch) {
-    const entry = this.overlay$.value.get(id);
-    if (!entry) return;
-    for (const key of Object.keys(patch) as (keyof TaskValues)[]) {
-      if (key in before) Object.assign(entry.patch, { [key]: before[key] });
-      else delete entry.patch[key];
-    }
-    this.endWrite(id);
-    this.overlay$.next(new Map(this.overlay$.value));
+  private readLive(docId: string, live: LiveDoc) {
+    const rows = readLiveRows(docId, live.doc.yDoc);
+    if (isEqual(rows, live.rows)) return;
+    live.rows = rows;
+    this.liveChanged$.next();
   }
 
-  private rawRow(id: string): IndexedTask | undefined {
-    let found: IndexedTask | undefined;
-    this.rows$
-      .subscribe(rows => {
-        found = rows.find(r => taskId(r) === id);
-      })
-      .unsubscribe();
-    return found;
+  /**
+   * Lets the doc go once its writes are done and the index shows the same
+   * rows (`IndexedTask` holds just the fields the views use), so letting go
+   * changes nothing on screen. An index that never catches up (paused,
+   * battery save, never indexed) is given up on after `HOLD_CAP_MS`.
+   */
+  private releaseIfCaughtUp(docId: string) {
+    const live = this.live.get(docId);
+    if (!live || live.writes > 0) return;
+    const indexed = this.indexRows.filter(r => r.docId === docId);
+    if (!live.rows || isEqual(byBlockId(indexed), byBlockId(live.rows))) {
+      this.releaseDoc(docId);
+    } else {
+      live.timer ??= setTimeout(() => {
+        console.warn(
+          `[tasks] index still differs from doc ${docId} after ${HOLD_CAP_MS / 1000} s; showing the index`
+        );
+        this.releaseDoc(docId);
+      }, HOLD_CAP_MS);
+    }
+  }
+
+  private releaseDoc(docId: string) {
+    const live = this.live.get(docId);
+    if (!live) return;
+    this.live.delete(docId);
+    clearTimeout(live.timer);
+    live.detach?.();
+    live.release();
+    if (live.rows) this.liveChanged$.next();
   }
 }

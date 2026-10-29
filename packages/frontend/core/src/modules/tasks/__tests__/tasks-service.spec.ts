@@ -9,6 +9,7 @@ import {
   throwError,
 } from 'rxjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Array as YArray, Doc as YDoc, Map as YMap, Text as YText } from 'yjs';
 
 import { DocsService } from '../../doc/services/docs';
 import { WorkspaceService } from '../../workspace';
@@ -133,7 +134,6 @@ function setup(
   });
   const indexer = {
     state$: indexerState$,
-    waitForDocCompleted: vi.fn(async (_docId: string) => {}),
     search$: vi.fn(
       (_table: string, query: FakeQuery, opts: FakeSearchOptions) =>
         rows$.pipe(map(({ nodes }) => fakeSearch(nodes, query, opts)))
@@ -153,15 +153,45 @@ function setup(
     }),
   };
 
-  const models = new Map<
-    string,
-    { flavour: string; props: Record<string, unknown> }
-  >();
+  // The source docs, as real Yjs docs the service reads live.
+  const ydocs = new Map<string, YDoc>();
+  const blockMap = (key: string) => {
+    const [docId, blockId] = key.split(':');
+    return ydocs.get(docId)?.getMap<YMap<unknown>>('blocks').get(blockId);
+  };
   for (const [key, props] of Object.entries(options.blocks ?? {})) {
-    models.set(key, { flavour: 'affine:list', props: { ...props } });
+    const [docId, blockId] = key.split(':');
+    let ydoc = ydocs.get(docId);
+    if (!ydoc) {
+      ydoc = new YDoc({ guid: docId });
+      ydocs.set(docId, ydoc);
+      const page = new YMap<unknown>();
+      page.set('sys:id', 'page');
+      page.set('sys:flavour', 'affine:page');
+      page.set('sys:children', YArray.from<string>([]));
+      ydoc.getMap('blocks').set('page', page);
+    }
+    const block = new YMap<unknown>();
+    block.set('sys:id', blockId);
+    block.set('sys:flavour', 'affine:list');
+    block.set('prop:text', new YText(blockId));
+    for (const [k, v] of Object.entries(props)) block.set(`prop:${k}`, v);
+    const blocks = ydoc.getMap<YMap<unknown>>('blocks');
+    blocks.set(blockId, block);
+    const children = blocks.get('page')?.get('sys:children') as YArray<string>;
+    children.push([blockId]);
   }
+  /** A block's props as the model sees them (backed by the Yjs map). */
+  const propsOf = (block: YMap<unknown>) =>
+    new Proxy({} as Record<string, unknown>, {
+      get: (_, k) => block.get(`prop:${String(k)}`),
+      set: (_, k, v) => (block.set(`prop:${String(k)}`, v), true),
+      deleteProperty: (_, k) => (block.delete(`prop:${String(k)}`), true),
+    });
   const opened: string[] = [];
   const released: string[] = [];
+  /** A write fails while this is set. */
+  let failWrites = false;
   const docs$ = new BehaviorSubject<DocSpec[]>(
     options.docs ?? [
       { id: 'doc-a', title: 'Doc A' },
@@ -214,25 +244,32 @@ function setup(
     },
     open: vi.fn((docId: string) => {
       opened.push(docId);
+      const ydoc = ydocs.get(docId) ?? new YDoc({ guid: docId });
       // `updateBlock` skips `undefined` like the real store.
       const store = {
         readonly: false,
-        transact: (fn: () => void) => fn(),
+        transact: (fn: () => void) => ydoc.transact(fn),
         updateBlock: (
           model: { props: Record<string, unknown> },
           props: Record<string, unknown>
         ) => {
-          for (const [k, v] of Object.entries(props)) {
-            if (v !== undefined) model.props[k] = v;
-          }
+          if (failWrites) throw new Error('write failed');
+          ydoc.transact(() => {
+            for (const [k, v] of Object.entries(props)) {
+              if (v !== undefined) model.props[k] = v;
+            }
+          });
         },
         getBlock: (blockId: string) => {
-          const model = models.get(`${docId}:${blockId}`);
-          return model ? { model } : undefined;
+          const block = blockMap(`${docId}:${blockId}`);
+          return block
+            ? { model: { flavour: 'affine:list', props: propsOf(block) } }
+            : undefined;
         },
       };
       return {
         doc: {
+          yDoc: ydoc,
           blockSuiteDoc: store,
           addPriorityLoad: () => () => {},
           waitForSyncReady: async () => {},
@@ -263,18 +300,23 @@ function setup(
     docs$,
     opened,
     released,
+    open: docsService.open,
     /** the index catches up with the given tasks */
     index: (tasks: TaskSpec[]) => rows$.next({ nodes: tasks.map(node) }),
-    setIndexing: (busy: boolean) =>
-      indexerState$.next({
-        ...indexerState$.value,
-        completed: !busy,
-        indexing: busy ? 1 : 0,
-      }),
     deleteDocs: () => records.clear(),
     trashAll: (trash: boolean) =>
       docs$.next(docs$.value.map(d => ({ ...d, trash }))),
-    props: (key: string) => models.get(key)?.props,
+    failWrites: (fail: boolean) => (failWrites = fail),
+    /** a block's props in the source doc */
+    props: (key: string) => {
+      const block = blockMap(key);
+      if (!block) return undefined;
+      const props: Record<string, unknown> = {};
+      for (const [k, v] of block.entries()) {
+        if (k.startsWith('prop:') && k !== 'prop:text') props[k.slice(5)] = v;
+      }
+      return props;
+    },
   };
 }
 
@@ -701,9 +743,78 @@ describe('reading the index', () => {
   });
 });
 
-describe('Inbox does not flash empty while the index or doc list churns', () => {
-  const blocks = { 'doc-a:t1': { type: 'todo', checked: false } };
+describe('values right after a write come from the doc', () => {
+  const blocks = {
+    'doc-a:t1': { type: 'todo', checked: false },
+    'doc-a:t2': { type: 'todo', checked: false },
+  };
+  const tasks: TaskSpec[] = [{ blockId: 't1' }, { blockId: 't2' }];
+  /** The index once it shows the doc (`order` is the position in the doc). */
+  const caughtUp = (t1: Partial<TaskSpec>): TaskSpec[] => [
+    { blockId: 't1', order: 1, ...t1 },
+    { blockId: 't2', order: 2 },
+  ];
+  const rowOf = (groups: TaskGroup[], blockId: string) =>
+    groups.flatMap(g => g.rows).find(r => r.blockId === blockId);
 
+  it('a tick shows at once and stays through a slow, half-rebuilt index', async () => {
+    vi.useFakeTimers();
+    const env = setup({ tasks, blocks });
+    const all = viewOf(env, 'all');
+    await env.service.toggle('doc-a:t1');
+    expect(rowOf(all.value, 't1')?.checked).toBe(true);
+
+    env.index([{ blockId: 't1' }]); // re-indexing: half the doc, old values
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(blockIds(all.value).sort()).toEqual(['t1', 't2']);
+    expect(rowOf(all.value, 't1')?.checked).toBe(true);
+    expect(env.released).toEqual([]);
+
+    env.index(caughtUp({ checked: true, completedAt: NOON }));
+    await flush();
+    expect(rowOf(all.value, 't1')?.checked).toBe(true);
+    expect(env.released).toEqual(['doc-a']);
+  });
+
+  it('a quick second tick decides from the doc, not the index', async () => {
+    const env = setup({ tasks, blocks });
+    const all = viewOf(env, 'all');
+    await env.service.toggle('doc-a:t1');
+    env.index(tasks); // a stale read: still unchecked
+    await env.service.toggle('doc-a:t1');
+    expect(env.props('doc-a:t1')?.checked).toBe(false);
+    expect(rowOf(all.value, 't1')?.checked).toBe(false);
+  });
+
+  it('lets the doc go after 30 s when the index does not catch up', async () => {
+    vi.useFakeTimers();
+    const env = setup({ tasks, blocks });
+    const inbox = viewOf(env, 'inbox');
+    await env.service.setPriority('doc-a:t1', 3);
+    env.index(caughtUp({})); // without the priority
+    await flush();
+    expect(rowOf(inbox.value, 't1')?.priority).toBe(3);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(env.released).toEqual(['doc-a']);
+    expect(rowOf(inbox.value, 't1')?.priority).toBe(0);
+  });
+
+  it("a failed write shows the doc's real value", async () => {
+    const env = setup({
+      tasks, // stale: the index says t1 is open
+      blocks: {
+        ...blocks,
+        'doc-a:t1': { type: 'todo', checked: true, completedAt: NOON },
+      },
+    });
+    const all = viewOf(env, 'all');
+    env.failWrites(true);
+    await expect(env.service.toggle('doc-a:t1')).rejects.toThrow();
+    expect(rowOf(all.value, 't1')?.checked).toBe(true);
+  });
+});
+
+describe('Inbox does not flash empty while the doc list churns', () => {
   /** Row counts of every emission of the Inbox view. */
   function recordInbox(env: Env) {
     const seen: number[] = [];
@@ -712,41 +823,6 @@ describe('Inbox does not flash empty while the index or doc list churns', () => 
     );
     return seen;
   }
-
-  it("keeps a doc's tasks while our write is re-indexed (delete, then insert)", async () => {
-    const env = setup({
-      tasks: [{ blockId: 't1' }, { blockId: 't2' }],
-      blocks,
-    });
-    let indexed!: () => void;
-    env.indexer.waitForDocCompleted.mockReturnValue(
-      new Promise<void>(resolve => (indexed = resolve))
-    );
-    const seen = recordInbox(env);
-    await env.service.setPriority('doc-a:t1', 2);
-    env.index([]); // the doc's blocks are deleted...
-    env.index([{ blockId: 't1', priority: 2 }]); // ...and inserted one by one
-    env.index([{ blockId: 't1', priority: 2 }, { blockId: 't2' }]);
-    indexed();
-    await flush();
-    expect(Math.min(...seen)).toBe(2);
-  });
-
-  it('stops holding the rows after 10 s', async () => {
-    vi.useFakeTimers();
-    const env = setup({
-      tasks: [{ blockId: 't1' }, { blockId: 't2' }],
-      blocks,
-    });
-    env.indexer.waitForDocCompleted.mockReturnValue(new Promise(() => {}));
-    const inbox = viewOf(env, 'inbox');
-    await env.service.setPriority('doc-a:t1', 2);
-    env.index([{ blockId: 't1' }]);
-    expect(blockIds(inbox.value)).toEqual(['t1', 't2']);
-    vi.advanceTimersByTime(11_000);
-    env.index([{ blockId: 't1' }]); // t2 really was deleted
-    expect(blockIds(inbox.value)).toEqual(['t1']);
-  });
 
   it('keeps tasks when the doc streams briefly report no docs', () => {
     const env = setup({ tasks: [{ blockId: 't1' }, { blockId: 't2' }] });
@@ -777,14 +853,12 @@ describe('triage', () => {
     const counts = watch(env.service.counts$);
     expect(counts.value.inbox).toBe(1);
 
-    const pending = env.service.setDue('doc-a:t1', '2026-10-29');
-    // before the write finished and before the index caught up
+    await env.service.setDue('doc-a:t1', '2026-10-29');
+    // before the index caught up
     expect(inbox.value).toEqual([]);
     expect(shape(tomorrow.value)).toEqual([['day', '2026-10-29', ['t1']]]);
     expect(counts.value).toMatchObject({ inbox: 0, tomorrow: 1 });
-    await pending;
     expect(env.props('doc-a:t1')?.due).toBe('2026-10-29');
-    expect(env.released).toEqual(['doc-a']);
   });
 
   it('a priority alone keeps the task in Inbox, on top', async () => {
@@ -811,7 +885,11 @@ describe('triage', () => {
       'priority',
     ],
   ])('%s removes the prop and shows it at once', async (_n, write, gone) => {
-    const env = setup({ tasks: [t2], blocks });
+    // the doc holds only t2, like the index
+    const env = setup({
+      tasks: [t2],
+      blocks: { 'doc-a:t2': blocks['doc-a:t2'] },
+    });
     const inbox = viewOf(env, 'inbox');
     await write(env.service);
     expect(gone in (env.props('doc-a:t2') ?? {})).toBe(false);
@@ -851,70 +929,12 @@ describe('triage', () => {
     expect(env.props('doc-a:t1')).toEqual({ type: 'todo', checked: false });
   });
 
-  it('takes the optimistic change back when the write fails', async () => {
-    const env = setup({ tasks: [{ blockId: 'missing' }], blocks });
-    const inbox = viewOf(env, 'inbox');
-    await expect(
-      env.service.setDue('doc-a:missing', '2026-10-29')
-    ).rejects.toThrow();
-    expect(blockIds(inbox.value)).toEqual(['missing']);
-    expect(env.released).toEqual(['doc-a']);
-  });
-
-  describe('optimistic overlay', () => {
-    it('holds the change until the doc is indexed, then yields to the index', async () => {
-      const env = setup({ tasks: [{ blockId: 't1' }], blocks });
-      let indexed!: () => void;
-      env.indexer.waitForDocCompleted.mockReturnValue(
-        new Promise<void>(resolve => (indexed = resolve))
-      );
-      const tomorrow = viewOf(env, 'tomorrow');
-      await env.service.setDue('doc-a:t1', '2026-10-29');
-
-      env.index([{ blockId: 't1' }]); // a stale emission while indexing
-      await flush();
-      expect(blockIds(tomorrow.value)).toEqual(['t1']);
-
-      indexed();
-      await flush();
-      expect(blockIds(tomorrow.value)).toEqual(['t1']); // waits for an emission
-
-      // another device moves it: the optimistic value must not win
-      env.index([{ blockId: 't1', due: '2026-11-01' }]);
-      await flush();
-      expect(tomorrow.value).toEqual([]);
-      expect(blockIds(viewOf(env, 'next7').value)).toEqual(['t1']);
+  it('rejects, not throws, when the doc cannot be opened', async () => {
+    const env = setup({ tasks: [{ blockId: 't1' }], blocks });
+    env.open.mockImplementationOnce(() => {
+      throw new Error('Doc record not found');
     });
-
-    it('stops waiting for an indexer that never completes the doc', async () => {
-      vi.useFakeTimers();
-      const env = setup({ tasks: [{ blockId: 't1' }], blocks });
-      env.indexer.waitForDocCompleted.mockReturnValue(new Promise(() => {}));
-      const inbox = viewOf(env, 'inbox');
-      await env.service.setDue('doc-a:t1', '2026-10-29');
-      expect(inbox.value).toEqual([]);
-      vi.advanceTimersByTime(11_000);
-      await flush();
-      env.index([{ blockId: 't1' }]);
-      await flush();
-      expect(blockIds(inbox.value)).toEqual(['t1']);
-    });
-
-    it('a failed write keeps an earlier write and still settles', async () => {
-      const env = setup({ tasks: [{ blockId: 't1' }], blocks });
-      const inbox = viewOf(env, 'inbox');
-      await env.service.setPriority('doc-a:t1', 3);
-      await flush();
-      const failing = env.service.setDue('doc-a:t1', '2026-10-29');
-      env.trashAll(true); // the write runs after this
-      await expect(failing).rejects.toThrow();
-      env.trashAll(false);
-      expect(inbox.value[0].rows[0]).toMatchObject({ priority: 3, due: null });
-
-      env.index([{ blockId: 't1' }]); // the entry settled: this drops it
-      await flush();
-      expect(inbox.value[0].rows[0].priority).toBe(0);
-    });
+    await expect(env.service.toggle('doc-a:t1')).rejects.toThrow();
   });
 });
 
@@ -1008,15 +1028,13 @@ describe('toggle', () => {
     const counts = watch(env.service.counts$);
     expect(counts.value).toMatchObject({ today: 1, completed: 1 });
 
-    const pending = env.service.toggle('doc-a:t1');
+    await env.service.toggle('doc-a:t1');
     expect(counts.value).toMatchObject({ today: 0, completed: 2 });
     expect(blockIds(completed.value).sort()).toEqual(['t1', 't2']);
-    await pending;
     expect(env.props('doc-a:t1')).toMatchObject({
       checked: true,
       completedAt: NOON,
     });
-    expect(env.released).toEqual(['doc-a']);
 
     await env.service.toggle('doc-a:t2');
     expect(env.props('doc-a:t2')?.checked).toBe(false);

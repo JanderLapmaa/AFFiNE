@@ -1,6 +1,6 @@
 import type { TasksViewId } from '@affine/core/modules/tasks';
 
-export const DEFAULT_VIEW: TasksViewId = 'inbox';
+export const DEFAULT_VIEW: TasksViewId = 'today';
 
 /** Nav order; the divider goes after the first four. */
 export const NAV_VIEWS: readonly TasksViewId[] = [

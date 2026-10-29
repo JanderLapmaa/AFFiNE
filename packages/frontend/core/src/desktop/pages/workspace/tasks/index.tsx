@@ -35,7 +35,7 @@ import { TasksNav } from './tasks-nav';
 import * as styles from './tasks-page.css';
 import { isInbox, rowShortcut } from './triage';
 import { useTaskActions } from './use-task-actions';
-import { DEFAULT_VIEW, parseView, viewHref } from './views';
+import { parseView, viewHref } from './views';
 
 const DETAIL_TAB_ID = 'tasks-detail';
 
@@ -61,7 +61,7 @@ const TasksPage = () => {
     },
     [view, viewEntity]
   );
-  const goToInbox = useCallback(() => selectView(DEFAULT_VIEW), [selectView]);
+  const goToInbox = useCallback(() => selectView('inbox'), [selectView]);
 
   const actions = useTaskActions();
   const toggleTask = actions.toggle;

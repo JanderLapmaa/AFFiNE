@@ -594,6 +594,31 @@ function readTaskFields(
   };
 }
 
+/**
+ * The todo list blocks of a doc with the same `content` and task fields
+ * `readAllBlocksFromDoc` indexes, without the rest of the crawl. For reading
+ * an open doc's tasks live.
+ */
+export function readTodoBlocks(ydoc: YDoc): {
+  blockId: string;
+  content: string;
+  additional: NonNullable<BlockDocumentInfo['additional']>;
+}[] {
+  const blocks = ydoc.getMap<any>('blocks');
+  const result = [];
+  for (const [blockId, walk] of collectTodoHeadings(blocks)) {
+    const block = blocks.get(blockId);
+    const text = block?.get('prop:text');
+    if (!block || !(text instanceof YText)) continue;
+    result.push({
+      blockId,
+      content: text.toString(),
+      additional: readTaskFields(block, walk),
+    });
+  }
+  return result;
+}
+
 export async function readAllBlocksFromDoc({
   ydoc,
   rootYDoc,

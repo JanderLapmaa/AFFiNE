@@ -15,6 +15,7 @@ import {
   readAllBlocksFromDoc,
   readAllDocIdsFromRootDoc,
   readAllDocsFromRootDoc,
+  readTodoBlocks,
 } from '../src';
 
 const rootDocSnapshot = readFileSync(
@@ -287,6 +288,17 @@ test('should read task fields from todo list blocks', async () => {
   }
 
   expect(actual).toEqual(expected);
+
+  // the live read gives the same content and task fields
+  const live = readTodoBlocks(ydoc);
+  expect(Object.fromEntries(live.map(b => [b.blockId, b.additional]))).toEqual(
+    expected
+  );
+  for (const block of live) {
+    expect(block.content).toBe(
+      result!.blocks.find(b => b.blockId === block.blockId)?.content
+    );
+  }
 
   // a nested todo comes after the block before its parent and before the next
   // sibling of its parent (document order)
