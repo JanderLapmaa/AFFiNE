@@ -27,7 +27,7 @@ browser; desktop and Android layouts, clickable). Background:
 - Desktop: the AFFiNE sidebar already holds workspace navigation, so a second tab
   strip would be crowded. A 210px inner nav (as in TickTick) holds:
   Inbox, Today, Tomorrow, Next 7 Days, then a divider, then All tasks and
-  Completed. Each shows an unchecked count (Completed shows its checked count). Collapsible via the usual
+  Completed. Each shows an unchecked count (Completed shows its checked count). Always visible (no collapse toggle; user change after hand-test). Was: collapsible via the usual
   sidebar-toggle pattern when the window is narrow (< 900px).
 - Mobile: no inner sidebar. A horizontally scrollable chip row under the title:
   Inbox, Today, Tomorrow, Next 7 Days, All, Done, each with a count. The chip
@@ -37,14 +37,14 @@ Count rules (unchecked tasks only, in non-trashed docs):
 
 | View        | Contains                                                               |
 | ----------- | ---------------------------------------------------------------------- |
-| Inbox       | no date **and** no priority                                            |
+| Inbox       | no date (any priority)                                                 |
 | Today       | due today **or overdue** (overdue gets its own red group)              |
 | Tomorrow    | due tomorrow                                                           |
 | Next 7 Days | overdue + today + next 6 days, grouped by day                          |
-| All tasks   | everything unchecked: Scheduled, No date (priority only), Inbox        |
+| All tasks   | everything unchecked: Scheduled, Inbox                                 |
 | Completed   | all checked tasks, newest completion first, grouped by completion date |
 
-"No date (priority only)" exists because the requirement says setting only a
+(Superseded after the hand-test: a priority alone now keeps a task in Inbox, so the old "No date (priority only)" group is gone.) Originally: "No date (priority only)" existed because setting only a
 priority removes a task from Inbox, which would otherwise leave it in no view.
 
 ## Task row
@@ -134,7 +134,7 @@ The field also understands the inline syntax below.
 
 | Where                              | Illustration + copy                                                         | Action      |
 | ---------------------------------- | --------------------------------------------------------------------------- | ----------- |
-| Inbox (all triaged)                | "Inbox zero. Every checkbox from your docs has a date or priority."         | none        |
+| Inbox (all triaged)                | "Inbox zero. Every checkbox from your docs has a date."                     | none        |
 | Today                              | "Nothing due today. Enjoy it, or pull something in from the Inbox."         | Go to Inbox |
 | Tomorrow / Next 7 Days             | "Nothing planned…"                                                          | Go to Inbox |
 | All tasks (workspace has no TODOs) | "No tasks yet. Type `[ ]` in any doc to make a checkbox, or add one above." | Add a task  |
@@ -205,7 +205,7 @@ Proposed, not yet reviewed:
 
 5. Tasks lives in the main sidebar under Journals, and as an Android tab replacing All docs.
 6. Inner left nav on desktop, chip row on mobile.
-7. Inbox = no date and no priority; setting either removes it; undo toast.
+7. Inbox = no date; setting a date removes it, a priority alone doesn't (user change after hand-test); undo toast.
 8. Overdue is shown in Today and Next 7 Days as a red group.
 9. Completing a task keeps it crossed off in its view until its date has passed; Completed view shows the completion date (user change).
 10. Title is read-only in the Tasks view in v1, except quick-add tasks, whose doc is hidden.

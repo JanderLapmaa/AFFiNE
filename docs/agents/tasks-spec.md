@@ -22,9 +22,10 @@ A **Tasks** view, reached from the desktop sidebar directly below Journals and
 from an Android bottom tab. It lists every unchecked TODO from every
 non-trashed, non-template doc in the workspace.
 
-- Every new TODO lands in **Inbox** on its own, with no date and no priority.
-- The user **triages** each one by giving it a date and/or a priority. As soon
-  as it has either, it leaves Inbox.
+- Every new TODO lands in **Inbox** on its own, with no date.
+- The user **triages** each one by giving it a date (and optionally a
+  priority). As soon as it has a date, it leaves Inbox; a priority alone keeps
+  it in Inbox.
 - **Today**, **Tomorrow** and **Next 7 Days** show dated tasks, with overdue
   tasks in a red group. **All tasks** shows every unchecked task, and
   **Completed** shows checked tasks by completion date.
@@ -58,7 +59,7 @@ non-trashed, non-template doc in the workspace.
 14. As a user, I want to set a date from quick chips (Today, Tomorrow, Next Monday, In a week), so that triage is one tap.
 15. As a user, I want a date picker and a Clear option, so that I can choose any date or remove one.
 16. As a user, I want to set a priority (High / Medium / Low / None), so that I can tell what matters most.
-17. As a user, I want a task to leave Inbox as soon as it has a date or a priority, so that Inbox only holds what is left to triage.
+17. As a user, I want a task to leave Inbox as soon as it has a date (a priority alone keeps it in Inbox), so that Inbox only holds what is left to schedule.
 18. As a user, I want a toast saying where the task went, with Undo for 5 seconds, so that a mis-tap is cheap.
 19. As a desktop user, I want calendar and flag buttons to appear when I hover an Inbox row, so that I can triage without opening anything.
 20. As a desktop user, I want keyboard triage (`T` today, `M` tomorrow, `D` date picker, `1`/`2`/`3` priority, `Space` toggle, `Enter` details, arrows to move), so that I can clear Inbox without the mouse.
@@ -71,9 +72,9 @@ non-trashed, non-template doc in the workspace.
 24. As a user, I want overdue tasks in their own red group, so that slipped tasks stand out.
 25. As a user, I want a Tomorrow view, so that I can plan the next day.
 26. As a user, I want a Next 7 Days view (overdue, today and the next six days) grouped by day, so that I can see my week.
-27. As a user, I want an All tasks view with Scheduled, No date (priority only) and Inbox groups, so that tasks with only a priority still show up somewhere.
+27. As a user, I want an All tasks view with Scheduled and Inbox groups, so that I see every open task in one place.
 28. As a user, I want each view to show its unchecked count in the inner nav (desktop) or chip row (mobile), so that I know how much is in each.
-29. As a desktop user, I want the inner nav to collapse when the window is narrow, so that the list stays readable.
+29. As a desktop user, I want the inner nav always visible (no collapse toggle), so that switching views is always one click.
 30. As an Android user, I want a sticky, scrollable chip row for switching views, so that switching never needs scrolling back up.
 31. As a user, I want group headers to collapse and to remember that per view, so that I can hide groups I don't need.
 32. As a user, I want friendly empty states for Today, Tomorrow and Next 7 Days that point me to Inbox, so that an empty day suggests the next step.
@@ -144,7 +145,7 @@ non-trashed, non-template doc in the workspace.
 
   It reads through the docs-search/indexer layer and writes through the doc module, by opening the source doc and updating the block props. It takes an injectable clock, so "today" is the local calendar day and tests are deterministic.
 
-- **View membership rules** (unchecked unless stated): Inbox = no due and no priority. Today = due ≤ today, with overdue as its own group. Tomorrow = due today+1. Next 7 Days = due ≤ today+6, grouped by day, overdue first. All = every unchecked task, grouped Scheduled / No date (priority only) / Inbox. Completed = checked, newest `completedAt` first, grouped by completion day. Completed tasks also stay crossed off in their normal views: a dated task while due ≥ today, an undated task until the end of its completion day. They sort below open tasks in their group and are never shown as overdue.
+- **View membership rules** (unchecked unless stated): Inbox = no due (priority doesn't matter). Today = due ≤ today, with overdue as its own group. Tomorrow = due today+1. Next 7 Days = due ≤ today+6, grouped by day, overdue first. All = every unchecked task, grouped Scheduled / Inbox. Completed = checked, newest `completedAt` first, grouped by completion day. Completed tasks also stay crossed off in their normal views: a dated task while due ≥ today, an undated task until the end of its completion day. They sort below open tasks in their group and are never shown as overdue.
 - **Grouping:** Inbox groups by source doc, newest doc first. The other views group by date. Collapsed group state is per view and per viewer, kept in local UI state.
 - **Token parser:** a pure function shared by quick add now and the editor later. It returns `{ text, due?, priority? }` and recognises the tokens listed in the user stories, parsing on completed tokens only.
 - **Hidden Tasks doc:** created on first quick add and recorded in workspace-level metadata so every client finds the same doc. It is excluded from All docs, recents, search, favorites and the sidebar, with a setting to show it. It must be created once per workspace even when two devices quick-add at the same time offline. Pick a deterministic id or reconcile duplicates, and record which in the code.
@@ -156,6 +157,8 @@ non-trashed, non-template doc in the workspace.
 ## Decisions made during implementation
 
 Confirmed by the user while building:
+
+- **After the desktop hand-test (2026-10-29):** Inbox = no date; a priority alone keeps a task in Inbox (stories 12, 17, 27 updated; the All view's "No date (priority only)" group is gone). The desktop inner nav is always visible, no collapse toggle (story 29). The detail panel must keep showing a task after triage moves it out of the current view, so date and priority can be set in one go.
 
 - **Inbox doc order:** "newest doc first" means newest by the doc's **created** date.
 - **Row order inside a group:** open tasks above completed ones; then priority high → low; then the TODO's position in its doc (`additional.order` from the indexer), then doc id for ties across docs.
