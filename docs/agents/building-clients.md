@@ -109,3 +109,7 @@ Gotchas:
   top-level windows (one `AFFiNE-canary` window and no dialog is healthy),
   read `<temp dir>/logs/main.log`, then kill it. A canary build checks the
   upstream GitHub releases for updates; that 404 in `main.log` is expected.
+- Rebuilds: the stub `apps/electron/node_modules` shadows `esbuild` and breaks
+  `generate-assets` (`Cannot find package '.../node_modules/esbuild/index.js'`).
+  Move `apps/electron/node_modules` aside while running generate-assets, then
+  move it back before `package`.
