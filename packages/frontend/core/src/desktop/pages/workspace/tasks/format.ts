@@ -1,20 +1,8 @@
 import type { TaskGroup, TaskRow } from '@affine/core/modules/tasks';
 import { addDays, localDay } from '@affine/core/modules/tasks';
-import type { useI18n } from '@affine/i18n';
+import { i18nTime, type useI18n } from '@affine/i18n';
 
 type I18n = ReturnType<typeof useI18n>;
-
-const safeFormat = (
-  locale: string,
-  options: Intl.DateTimeFormatOptions,
-  date: Date
-) => {
-  try {
-    return new Intl.DateTimeFormat(locale, options).format(date);
-  } catch {
-    return new Intl.DateTimeFormat('en', options).format(date);
-  }
-};
 
 /** `Fri 30 Oct` (English), the locale's own order elsewhere. */
 export function shortDay(day: string, locale: string) {
@@ -24,7 +12,9 @@ export function shortDay(day: string, locale: string) {
     day: 'numeric',
     month: 'short',
   };
-  if (!locale.startsWith('en')) return safeFormat(locale, options, date);
+  if (!locale.startsWith('en')) {
+    return new Intl.DateTimeFormat(locale, options).format(date);
+  }
   const part = (type: Intl.DateTimeFormatPartTypes) =>
     new Intl.DateTimeFormat('en', options)
       .formatToParts(date)
@@ -34,11 +24,11 @@ export function shortDay(day: string, locale: string) {
 
 /** `Tuesday, Oct 27` (English). */
 export function longDay(day: string, locale: string) {
-  return safeFormat(
-    locale,
-    { weekday: 'long', month: 'short', day: 'numeric' },
-    parseDay(day)
-  );
+  return new Intl.DateTimeFormat(locale, {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+  }).format(parseDay(day));
 }
 
 const parseDay = (day: string) => {
@@ -46,7 +36,7 @@ const parseDay = (day: string) => {
   return new Date(y, m - 1, d);
 };
 
-/** `Today`, `Tomorrow`, `Fri 30 Oct`, or `2d ago` for days in the past. */
+/** `Today`, `Tomorrow`, `Fri 30 Oct`, or `2d ago` (i18nTime, narrow) for days in the past. */
 export function dueLabel(
   due: string,
   t: I18n,
@@ -58,10 +48,10 @@ export function dueLabel(
   if (due === today) return t['com.affine.tasks.date.today']();
   if (due === addDays(today, 1)) return t['com.affine.tasks.date.tomorrow']();
   if (relativePast && due < today) {
-    const days = Math.round(
-      (parseDay(today).getTime() - parseDay(due).getTime()) / 86_400_000
-    );
-    return t['com.affine.tasks.date.days-ago']({ count: String(days) });
+    return i18nTime(due, {
+      now,
+      relative: { accuracy: 'day', yesterdayAndTomorrow: false },
+    });
   }
   return shortDay(due, locale);
 }
@@ -111,8 +101,6 @@ export function groupLabel(
       return group.docTitle || t['com.affine.tasks.group.untitled-doc']();
     case 'scheduled':
       return t['com.affine.tasks.group.scheduled']();
-    case 'no-date':
-      return t['com.affine.tasks.group.no-date']();
     case 'inbox':
       return t['com.affine.tasks.group.inbox']();
     case 'completed-day': {

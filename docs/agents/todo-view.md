@@ -71,14 +71,22 @@ The UI talks only to `TasksService` (workspace scope), behind the
   `completed` = checked count), `inboxCount$` (badge), `state$`
   (`loading | ready | error`), `retry()` (re-runs the query; the indexer
   retries itself every 5s and has no restart hook).
-- Write: `setDue`, `setPriority`, `toggle` resolve to an undo token once the
-  doc write finishes; `undo(token)` only reverts if that token is still the
-  latest change (so a stale toast can't undo another task). Writes to a
-  trashed or missing doc reject.
-- Changes show at once through an optimistic overlay, dropped when the index
-  reflects the write (60s safety timeout).
+- Write: `setDue`, `setPriority`, `toggle` resolve once the doc is written,
+  with an `undo: () => Promise<void>` that writes the previous values back.
+  There is no token: "only the latest is undoable" is the UI toast layer's
+  job (one toast at a time). Writes and undo on a trashed or missing doc
+  reject.
+- Inbox = no due date (a priority alone keeps a task there). The All view is
+  Scheduled / Inbox.
+- Changes show at once through an optimistic overlay. An entry holds its
+  patch until the write resolves and the workspace indexer's
+  `waitForDocCompleted(docId)` resolves or 10 s pass (a paused indexer never
+  completes), and is dropped on the next search emission after that. A failed
+  write rolls back only its own keys.
+- No flashing views: a doc is left out only when it is trashed, a template, or
+  has no doc record. While one of our own writes to a doc is pending (max 10 s),
+  a doc whose rows shrank keeps its previous rows, because re-indexing deletes
+  and then re-inserts a doc's blocks.
 - Pure rules live in `projection.ts` and `date.ts`; the clock is the
   injectable `TasksClockStore`. Tests: `__tests__/tasks-service.spec.ts`
   (Seam 1, built through `Framework`).
-- `TaskRow.quickAdd` is always `false` until phase 6 marks rows from the
-  hidden Tasks doc.

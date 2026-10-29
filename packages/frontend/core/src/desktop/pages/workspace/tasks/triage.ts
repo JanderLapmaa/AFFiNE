@@ -26,18 +26,9 @@ export function datePresets(now = Date.now()): DatePreset[] {
   ];
 }
 
-/** Open task with neither a date nor a priority. */
-export function isInbox(task: Pick<TaskRow, 'due' | 'priority' | 'checked'>) {
-  return !task.checked && !task.due && task.priority === 0;
-}
-
-/** Whether applying `change` to `task` takes it out of the Inbox. */
-export function leavesInbox(
-  task: Pick<TaskRow, 'due' | 'priority' | 'checked'>,
-  change: { due?: string | null; priority?: TaskPriority }
-) {
-  if (!isInbox(task)) return false;
-  return (change.due ?? null) !== null || (change.priority ?? 0) !== 0;
+/** Open task without a date (a priority alone keeps it in the Inbox). */
+export function isInbox(task: Pick<TaskRow, 'due' | 'checked'>) {
+  return !task.checked && !task.due;
 }
 
 export type RowShortcut =

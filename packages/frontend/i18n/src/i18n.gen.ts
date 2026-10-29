@@ -7993,10 +7993,6 @@ export function useAFFiNEI18N(): {
       */
     ["com.affine.tasks.title"](): string;
     /**
-      * `Show task views`
-      */
-    ["com.affine.tasks.nav.toggle"](): string;
-    /**
       * `Inbox`
       */
     ["com.affine.tasks.view.inbox"](): string;
@@ -8029,12 +8025,6 @@ export function useAFFiNEI18N(): {
       */
     ["com.affine.tasks.date.tomorrow"](): string;
     /**
-      * `{{count}}d ago`
-      */
-    ["com.affine.tasks.date.days-ago"](options: {
-        readonly count: string;
-    }): string;
-    /**
       * `Due {{date}}`
       */
     ["com.affine.tasks.date.due"](options: {
@@ -8048,10 +8038,6 @@ export function useAFFiNEI18N(): {
       * `Scheduled`
       */
     ["com.affine.tasks.group.scheduled"](): string;
-    /**
-      * `No date (priority only)`
-      */
-    ["com.affine.tasks.group.no-date"](): string;
     /**
       * `Inbox`
       */
@@ -8079,10 +8065,6 @@ export function useAFFiNEI18N(): {
       */
     ["com.affine.tasks.row.open-source"](): string;
     /**
-      * `Quick add`
-      */
-    ["com.affine.tasks.row.quick-add"](): string;
-    /**
       * `Low priority`
       */
     ["com.affine.tasks.priority.low"](): string;
@@ -8103,7 +8085,7 @@ export function useAFFiNEI18N(): {
       */
     ["com.affine.tasks.empty.inbox.title"](): string;
     /**
-      * `Every checkbox from your docs has a date or priority.`
+      * `Inbox zero. Every checkbox from your docs has a date.`
       */
     ["com.affine.tasks.empty.inbox.description"](): string;
     /**
@@ -8244,10 +8226,6 @@ export function useAFFiNEI18N(): {
       * `Couldn't update the task`
       */
     ["com.affine.tasks.toast.error"](): string;
-    /**
-      * `Can't undo anymore`
-      */
-    ["com.affine.tasks.toast.undo-stale"](): string;
     /**
       * `Couldn't undo the change`
       */

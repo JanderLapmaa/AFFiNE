@@ -17,7 +17,6 @@ export const headerIcon = style({
 });
 
 export const body = style({
-  position: 'relative',
   display: 'flex',
   flex: 1,
   width: '100%',
@@ -35,20 +34,6 @@ export const nav = style({
   padding: '14px 8px',
   borderRight: `0.5px solid ${cssVarV2.layer.insideBorder.border}`,
   background: cssVarV2.layer.background.primary,
-  selectors: {
-    // Narrow container: the nav becomes an overlay, toggled from the header.
-    [`${body}[data-narrow=true] &`]: {
-      position: 'absolute',
-      top: 0,
-      bottom: 0,
-      left: 0,
-      zIndex: 10,
-      boxShadow: cssVar('menuShadow'),
-    },
-    [`${body}[data-narrow=true][data-nav-open=false] &`]: {
-      display: 'none',
-    },
-  },
 });
 
 export const navEntry = style({

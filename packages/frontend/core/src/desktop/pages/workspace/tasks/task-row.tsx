@@ -124,26 +124,20 @@ export const TaskRowItem = forwardRef<HTMLDivElement, TaskRowItemProps>(
           >
             {task.title}
           </div>
-          {task.quickAdd ? (
-            <div className={styles.source} data-static>
-              {t['com.affine.tasks.row.quick-add']()}
-            </div>
-          ) : (
-            <button
-              type="button"
-              className={styles.source}
-              tabIndex={-1}
-              title={t['com.affine.tasks.row.open-source']()}
-              onClick={handleSource}
-            >
-              <PageIcon className={styles.sourceIcon} />
-              <span className={styles.sourceText}>
-                {task.heading
-                  ? `${task.docTitle} › ${task.heading}`
-                  : task.docTitle}
-              </span>
-            </button>
-          )}
+          <button
+            type="button"
+            className={styles.source}
+            tabIndex={-1}
+            title={t['com.affine.tasks.row.open-source']()}
+            onClick={handleSource}
+          >
+            <PageIcon className={styles.sourceIcon} />
+            <span className={styles.sourceText}>
+              {task.heading
+                ? `${task.docTitle} › ${task.heading}`
+                : task.docTitle}
+            </span>
+          </button>
         </div>
         <div className={styles.trailing}>
           <div className={styles.meta}>

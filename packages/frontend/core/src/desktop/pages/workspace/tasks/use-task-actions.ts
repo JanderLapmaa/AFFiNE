@@ -3,14 +3,14 @@ import {
   type TaskPriority,
   type TaskRow,
   TasksService,
-  type TasksUndoToken,
+  type TasksUndo,
 } from '@affine/core/modules/tasks';
 import { useI18n } from '@affine/i18n';
 import { useService } from '@toeverything/infra';
 import { useCallback, useMemo } from 'react';
 
 import { dueLabel } from './format';
-import { leavesInbox } from './triage';
+import { isInbox } from './triage';
 import { useLocale } from './use-now';
 
 const fire = (promise: Promise<unknown>) => {
@@ -42,13 +42,14 @@ export function useTaskActions() {
 
   const run = useCallback(
     async (
-      write: () => Promise<TasksUndoToken>,
+      write: () => Promise<TasksUndo>,
       message: string,
-      leftInbox: boolean
+      leftInbox = false
     ) => {
+      // The old Undo must not outlive the start of a newer write.
+      notify.dismiss(lastUndoToast);
       try {
-        const token = await write();
-        notify.dismiss(lastUndoToast);
+        const undo = await write();
         lastUndoToast = notify.success(
           {
             title: leftInbox
@@ -60,11 +61,7 @@ export function useTaskActions() {
                 label: t['com.affine.tasks.toast.undo'](),
                 onClick: async () => {
                   try {
-                    if (!(await tasksService.undo(token))) {
-                      notify({
-                        title: t['com.affine.tasks.toast.undo-stale'](),
-                      });
-                    }
+                    await undo();
                   } catch (error) {
                     console.error(error);
                     notify.error({
@@ -82,7 +79,7 @@ export function useTaskActions() {
         notify.error({ title: t['com.affine.tasks.toast.error']() });
       }
     },
-    [t, tasksService]
+    [t]
   );
 
   return useMemo(
@@ -102,7 +99,7 @@ export function useTaskActions() {
                   ),
                 })
               : t['com.affine.tasks.toast.date-cleared'](),
-            leavesInbox(task, { due })
+            isInbox(task) && due !== null
           )
         );
       },
@@ -113,8 +110,7 @@ export function useTaskActions() {
             () => tasksService.setPriority(task.id, priority),
             key
               ? t['com.affine.tasks.toast.priority']({ priority: t[key]() })
-              : t['com.affine.tasks.toast.priority-cleared'](),
-            leavesInbox(task, { priority })
+              : t['com.affine.tasks.toast.priority-cleared']()
           )
         );
       },
@@ -124,8 +120,7 @@ export function useTaskActions() {
             () => tasksService.toggle(task.id),
             task.checked
               ? t['com.affine.tasks.toast.reopened']()
-              : t['com.affine.tasks.toast.completed'](),
-            false
+              : t['com.affine.tasks.toast.completed']()
           )
         );
       },

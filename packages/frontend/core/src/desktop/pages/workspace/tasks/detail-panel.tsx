@@ -13,7 +13,8 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   useCallback,
-  useMemo,
+  useEffect,
+  useState,
 } from 'react';
 
 import * as styles from './detail-panel.css';
@@ -102,28 +103,20 @@ export const TaskDetail = ({
         <div className={styles.sourceLabel}>
           {t['com.affine.tasks.detail.source']()}
         </div>
-        {task.quickAdd ? (
-          <div className={styles.sourceDoc}>
-            {t['com.affine.tasks.row.quick-add']()}
-          </div>
-        ) : (
-          <>
-            <div className={styles.sourceDoc}>
-              <PageIcon />
-              <span className={styles.sourceText}>
-                {task.heading
-                  ? `${task.docTitle} › ${task.heading}`
-                  : task.docTitle}
-              </span>
-            </div>
-            <Button
-              data-testid="tasks-detail-open-source"
-              onClick={event => onOpenSource(task, event)}
-            >
-              {t['com.affine.tasks.row.open-source']()}
-            </Button>
-          </>
-        )}
+        <div className={styles.sourceDoc}>
+          <PageIcon />
+          <span className={styles.sourceText}>
+            {task.heading
+              ? `${task.docTitle} › ${task.heading}`
+              : task.docTitle}
+          </span>
+        </div>
+        <Button
+          data-testid="tasks-detail-open-source"
+          onClick={event => onOpenSource(task, event)}
+        >
+          {t['com.affine.tasks.row.open-source']()}
+        </Button>
       </div>
     </div>
   );
@@ -157,11 +150,20 @@ const SelectedDetail = ({
   const tasksService = useService(TasksService);
   const allGroups = useLiveData(tasksService.view$('all'));
   const completedGroups = useLiveData(tasksService.view$('completed'));
-  const task = useMemo(
-    () =>
-      findTask(allGroups, selectedId) ?? findTask(completedGroups, selectedId),
-    [allGroups, completedGroups, selectedId]
-  );
+  const found =
+    findTask(allGroups, selectedId) ?? findTask(completedGroups, selectedId);
+  // A lookup can miss while a write settles: keep the last row for 2 s, then
+  // show the empty state (the task is really gone, e.g. deleted or trashed).
+  const [held, setHeld] = useState<TaskRow | null>(null);
+  useEffect(() => {
+    if (found) {
+      setHeld(found);
+      return;
+    }
+    const timer = setTimeout(() => setHeld(null), 2000);
+    return () => clearTimeout(timer);
+  }, [found]);
+  const task = found ?? (held?.id === selectedId ? held : null);
   return <TaskDetail task={task} {...props} />;
 };
 

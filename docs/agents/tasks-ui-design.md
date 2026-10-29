@@ -72,7 +72,7 @@ panel (desktop), bottom sheet (mobile).
 - **Date**: chips `Today`, `Tomorrow`, `Next Monday`, `In a week`, plus a date
   picker (reuse `@affine/component` `date-picker`) and `Clear`.
 - **Priority**: chips High / Medium / Low / None.
-- As soon as a date or priority is set, the row leaves Inbox. A toast says where
+- As soon as a date is set, the row leaves Inbox (a priority alone keeps it there). A toast says where
   it went ("Scheduled for Tomorrow · left Inbox") with **Undo** (5s).
 - Keyboard (desktop, row focused): `T` today, `M` tomorrow, `D` date picker,
   `1`/`2`/`3` priority low/medium/high, `Space` toggle, `Enter` open detail.

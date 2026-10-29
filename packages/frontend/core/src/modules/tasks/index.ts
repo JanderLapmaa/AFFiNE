@@ -16,7 +16,7 @@ export type {
   TasksClock,
   TasksCounts,
   TasksState,
-  TasksUndoToken,
+  TasksUndo,
   TasksViewId,
 } from './types';
 

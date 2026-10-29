@@ -18,9 +18,7 @@ export type TaskGroupKind =
   | 'doc'
   /** All tasks: tasks that have a due date. */
   | 'scheduled'
-  /** All tasks: priority set, no due date. */
-  | 'no-date'
-  /** All tasks: no due date and no priority. */
+  /** All tasks: no due date. */
   | 'inbox'
   /** Completed view: tasks completed on `date`. */
   | 'completed-day';
@@ -46,8 +44,6 @@ export interface TaskRow {
   heading: string | null;
   /** Open (unchecked) and due before today. Never true for checked tasks. */
   overdue: boolean;
-  /** Row comes from the hidden Tasks doc (title editable, no doc link). */
-  quickAdd: boolean;
 }
 
 export interface TaskGroup {
@@ -69,8 +65,8 @@ export interface TaskGroup {
  */
 export type TasksCounts = Record<TasksViewId, number>;
 
-/** Handle of the last triage or toggle, passed to `undo`. */
-export type TasksUndoToken = Readonly<{ taskId: string }>;
+/** Resolved by a write; calling it writes the previous values back. */
+export type TasksUndo = () => Promise<void>;
 
 export interface TasksState {
   status: 'loading' | 'ready' | 'error';

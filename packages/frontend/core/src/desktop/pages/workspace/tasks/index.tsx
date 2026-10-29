@@ -1,4 +1,3 @@
-import { IconButton } from '@affine/component';
 import { Header } from '@affine/core/components/pure/header';
 import { FeatureFlagService } from '@affine/core/modules/feature-flag';
 import {
@@ -19,13 +18,12 @@ import {
 } from '@affine/core/modules/workbench';
 import { inferOpenMode } from '@affine/core/utils';
 import { useI18n } from '@affine/i18n';
-import { InformationIcon, SidebarIcon } from '@blocksuite/icons/rc';
+import { InformationIcon } from '@blocksuite/icons/rc';
 import { useLiveData, useService } from '@toeverything/infra';
 import {
   type KeyboardEvent,
   type MouseEvent,
   useCallback,
-  useEffect,
   useState,
 } from 'react';
 
@@ -41,23 +39,6 @@ import { DEFAULT_VIEW, parseView, viewHref } from './views';
 
 const DETAIL_TAB_ID = 'tasks-detail';
 
-/** Below this width of the page the inner nav collapses behind a toggle. */
-const NARROW_WIDTH = 900;
-
-const useIsNarrow = (el: HTMLElement | null) => {
-  const [narrow, setNarrow] = useState(false);
-  useEffect(() => {
-    if (!el) return;
-    const observer = new ResizeObserver(entries => {
-      const width = entries[0]?.contentRect.width ?? el.clientWidth;
-      setNarrow(width < NARROW_WIDTH);
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [el]);
-  return narrow;
-};
-
 const TasksPage = () => {
   const t = useI18n();
   const tasksService = useService(TasksService);
@@ -72,12 +53,9 @@ const TasksPage = () => {
 
   // ViewBody renders through a portal, so the element is only known after mount.
   const [bodyEl, setBodyEl] = useState<HTMLDivElement | null>(null);
-  const narrow = useIsNarrow(bodyEl);
-  const [navOpen, setNavOpen] = useState(false);
 
   const selectView = useCallback(
     (next: TasksViewId) => {
-      setNavOpen(false);
       if (next === view) return;
       viewEntity.history.push(viewHref(next));
     },
@@ -202,16 +180,6 @@ const TasksPage = () => {
         <Header
           left={
             <div className={styles.headerTitle}>
-              {narrow ? (
-                <IconButton
-                  size="24"
-                  data-testid="tasks-nav-toggle"
-                  tooltip={t['com.affine.tasks.nav.toggle']()}
-                  onClick={() => setNavOpen(open => !open)}
-                >
-                  <SidebarIcon />
-                </IconButton>
-              ) : null}
               <span className={styles.headerIcon}>{VIEW_ICONS[view]}</span>
               {t[`com.affine.tasks.view.${view}`]()}
             </div>
@@ -219,13 +187,7 @@ const TasksPage = () => {
         />
       </ViewHeader>
       <ViewBody>
-        <div
-          ref={setBodyEl}
-          className={styles.body}
-          data-narrow={narrow}
-          data-nav-open={navOpen}
-          data-testid="tasks-page"
-        >
+        <div ref={setBodyEl} className={styles.body} data-testid="tasks-page">
           <TasksNav view={view} counts={counts} onSelect={selectView} />
           <section className={styles.main}>
             <TaskList

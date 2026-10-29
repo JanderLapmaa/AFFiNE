@@ -4,7 +4,6 @@ import type { Store } from '@blocksuite/affine/store';
 import { LiveData, Service } from '@toeverything/infra';
 import { isEqual } from 'lodash-es';
 import {
-  asapScheduler,
   BehaviorSubject,
   catchError,
   combineLatest,
@@ -12,15 +11,12 @@ import {
   map,
   NEVER,
   Observable,
-  observeOn,
   of,
   scan,
   shareReplay,
   startWith,
-  Subject,
-  Subscription,
   switchMap,
-  using,
+  tap,
 } from 'rxjs';
 
 import type { DocsService } from '../../doc/services/docs';
@@ -39,16 +35,16 @@ import type {
   TasksClock,
   TasksCounts,
   TasksState,
-  TasksUndoToken,
+  TasksUndo,
   TasksViewId,
 } from '../types';
 import type { TasksClockStore } from './tasks-clock';
 
-// Safety net: an optimistic value never outlives this, whatever the index does.
-const OVERLAY_SAFETY_TIMEOUT_MS = 60_000;
-
 // memory-indexer rejects a search where skip + limit exceeds this.
 const INDEXER_WINDOW = 10_000;
+
+// How long a wait for the indexer, or a hold on a doc's rows, may last.
+const INDEX_WAIT_MS = 10_000;
 
 // Batches stay under the window so docs growing meanwhile still fit.
 const BATCH_SIZE = 9000;
@@ -89,26 +85,22 @@ interface TaskValues {
   completedAt: number | null;
 }
 
-type OverlayPatch = Partial<TaskValues>;
+type Patch = Partial<TaskValues>;
 
-/** Optimistic values for one task, shown until the index catches up. */
+/**
+ * Optimistic values for one task. The entry keeps its patch until its writes
+ * are done and the indexer has processed the doc, then goes at the next rows$
+ * emission after that.
+ */
 interface OverlayEntry {
-  patch: OverlayPatch;
-  /** Indexed values when the first write started; undefined if unknown. */
-  baseline: TaskValues | undefined;
-  /** Writes started but not finished. */
-  pending: number;
-  /** The indexer went busy after the last write finished... */
-  busySeen: boolean;
-  /** ...and then reported idle again. */
-  idleSeen: boolean;
-  timer: ReturnType<typeof setTimeout>;
-}
-
-interface UndoEntry {
-  token: TasksUndoToken;
-  kind: 'due' | 'priority' | 'toggle';
-  before: TaskValues;
+  docId: string;
+  /** When the last write started, for the hold cap. */
+  since: number;
+  patch: Patch;
+  /** Writes started and not yet indexed. */
+  writes: number;
+  /** `rowsSeq` when the last write was indexed; null while writing. */
+  settledAt: number | null;
 }
 
 interface Model {
@@ -137,7 +129,7 @@ function valuesOf(task: IndexedTask): TaskValues {
   };
 }
 
-function applyPatch(task: IndexedTask, patch: OverlayPatch): IndexedTask {
+function applyPatch(task: IndexedTask, patch: Patch): IndexedTask {
   const next = { ...task };
   if (patch.due !== undefined) next.due = patch.due;
   if (patch.priority !== undefined) next.priority = patch.priority;
@@ -148,22 +140,51 @@ function applyPatch(task: IndexedTask, patch: OverlayPatch): IndexedTask {
   return next;
 }
 
+function countByDoc(rows: IndexedTask[]) {
+  const counts = new Map<string, number>();
+  for (const row of rows)
+    counts.set(row.docId, (counts.get(row.docId) ?? 0) + 1);
+  return counts;
+}
+
 /**
- * The index shows the entry's values once every patched key moved from the
- * baseline to the patch. Keys whose patch equals the baseline can't be told
- * apart from a stale row, so they also wait for the indexer to run and go
- * idle again after the write.
+ * A doc we just wrote to is re-indexed by deleting its blocks and inserting
+ * them again, and a query in between would show its tasks as gone. Such a
+ * doc (`held`) keeps its previous rows while its row count shrinks.
  */
-function isReflected(row: IndexedTask, entry: OverlayEntry) {
-  if (entry.pending > 0) return false;
-  const { patch, baseline } = entry;
-  for (const key of Object.keys(patch) as (keyof TaskValues)[]) {
-    if (row[key] !== patch[key]) return false;
-    if (baseline && baseline[key] === patch[key] && !entry.idleSeen) {
-      return false;
-    }
+function holdShrunkDocs(
+  prev: IndexedTask[],
+  next: IndexedTask[],
+  held: ReadonlySet<string>
+): IndexedTask[] {
+  if (!held.size) return next;
+  const after = countByDoc(next);
+  const shrunk = new Set<string>();
+  for (const [docId, n] of countByDoc(prev)) {
+    if (held.has(docId) && n > (after.get(docId) ?? 0)) shrunk.add(docId);
   }
-  return true;
+  if (!shrunk.size) return next;
+  return [
+    ...next.filter(row => !shrunk.has(row.docId)),
+    ...prev.filter(row => shrunk.has(row.docId)),
+  ];
+}
+
+function writeProp(
+  store: Store,
+  model: ListBlockModel,
+  key: 'due' | 'priority',
+  value: string | number | null
+) {
+  if (value === null) {
+    store.transact(() => {
+      delete model.props[key];
+    });
+  } else {
+    store.updateBlock(model, { [key]: value } as Partial<
+      ListBlockModel['props']
+    >);
+  }
 }
 
 /**
@@ -199,6 +220,10 @@ export class TasksService extends Service {
                 return task ? [task] : [];
               })
             ),
+            scan(
+              (prev, next) => holdShrunkDocs(prev, next, this.heldDocs()),
+              [] as IndexedTask[]
+            ),
             catchError((error: unknown) => {
               this.queryError$.next(
                 error instanceof Error ? error.message : String(error)
@@ -206,6 +231,11 @@ export class TasksService extends Service {
               return NEVER;
             })
           );
+      }),
+      tap(() => {
+        this.rowsSeq++;
+        // After this emission reached the views, not during it.
+        queueMicrotask(() => this.dropSettledOverlays());
       }),
       shareReplay({ bufferSize: 1, refCount: true })
     );
@@ -228,7 +258,7 @@ export class TasksService extends Service {
     );
     const docInfo$: Observable<ReadonlyMap<string, DocInfo>> = combineLatest([
       relevantDocs$,
-      this.docsService.allNonTrashDocIds$(),
+      this.docsService.allTrashDocIds$(),
       this.docsService.propertyValues$('isTemplate'),
       this.docsService.allDocTitle$(),
       this.docsService.allDocsCreatedDate$(),
@@ -237,13 +267,13 @@ export class TasksService extends Service {
       map(
         ([
           { docIds, needUpdated },
-          alive,
+          trashed,
           templates,
           titles,
           created,
           updated,
         ]) => {
-          const aliveSet = new Set(alive);
+          const trashedSet = new Set(trashed);
           const titleOf = new Map(titles.map(d => [d.id, d.title]));
           const createdOf = new Map(created.map(d => [d.id, d.createDate]));
           const updatedOf = new Map(
@@ -251,11 +281,13 @@ export class TasksService extends Service {
           );
           const infos = new Map<string, DocInfo>();
           for (const id of docIds) {
-            if (!aliveSet.has(id)) continue;
+            // Trashed docs and docs without a record are left out.
+            if (trashedSet.has(id) || !this.docsService.list.doc$(id).value) {
+              continue;
+            }
             infos.set(id, {
               title: titleOf.get(id) ?? '',
               template: !!templates.get(id),
-              quickAdd: false,
               createDate: createdOf.get(id),
               updatedDate: needUpdated.includes(id)
                 ? updatedOf.get(id)
@@ -268,7 +300,7 @@ export class TasksService extends Service {
       distinctUntilChanged(isEqual)
     );
 
-    const overlaid$: Observable<Model> = combineLatest([
+    this.model$ = combineLatest([
       this.rows$,
       docInfo$,
       this.overlay$,
@@ -281,14 +313,9 @@ export class TasksService extends Service {
         }),
         docs,
         today,
-      }))
+      })),
+      shareReplay({ bufferSize: 1, refCount: true })
     );
-    // Pruning runs beside the views (not inside them) and off the emission
-    // stack, so it can't re-enter the view pipeline.
-    this.model$ = using(
-      () => this.startPruning(),
-      () => overlaid$
-    ).pipe(shareReplay({ bufferSize: 1, refCount: true }));
 
     this.state$ = LiveData.from(
       combineLatest([
@@ -422,8 +449,8 @@ export class TasksService extends Service {
   private readonly overlay$ = new BehaviorSubject<
     ReadonlyMap<string, OverlayEntry>
   >(new Map());
-  private readonly pruneKick$ = new Subject<void>();
-  private undoEntry: UndoEntry | null = null;
+  /** Counts rows$ emissions, so an overlay can wait for "the next one". */
+  private rowsSeq = 0;
   private writeQueue: Promise<unknown> = Promise.resolve();
   private readonly views = new Map<TasksViewId, LiveData<TaskGroup[]>>();
 
@@ -498,175 +525,91 @@ export class TasksService extends Service {
 
   /**
    * Writes (`setDue`, `setPriority`, `toggle`) reject when the doc is trashed
-   * or missing, or the block is gone. They resolve with a token for `undo`.
+   * or missing, or the block is gone. They resolve once the doc is written,
+   * with an `undo` that writes the previous values back (and rejects likewise).
    * `due` is a local calendar day `YYYY-MM-DD`, or null to clear it.
    */
-  setDue(id: string, due: string | null): Promise<TasksUndoToken> {
+  setDue(id: string, due: string | null): Promise<TasksUndo> {
     if (due !== null && !DUE_RE.test(due)) {
       return Promise.reject(new Error(`Invalid due date: ${due}`));
     }
-    return this.change(id, 'due', { due }, (store, model) =>
-      writeDue(store, model, due)
-    );
+    return this.applyValues(id, () => ({ due }));
   }
 
   /** 1 low, 2 medium, 3 high; 0 or null clears the priority. */
-  setPriority(
-    id: string,
-    priority: TaskPriority | null
-  ): Promise<TasksUndoToken> {
-    const value: TaskPriority = priority ?? 0;
-    return this.change(id, 'priority', { priority: value }, (store, model) =>
-      writePriority(store, model, value)
-    );
+  setPriority(id: string, priority: TaskPriority | null): Promise<TasksUndo> {
+    return this.applyValues(id, () => ({ priority: priority ?? 0 }));
   }
 
-  toggle(id: string): Promise<TasksUndoToken> {
-    const row = this.readRow(id);
+  toggle(id: string): Promise<TasksUndo> {
     const now = this.clock.now();
-    const next = row ? !row.checked : undefined;
-    return this.change(
-      id,
-      'toggle',
-      next === undefined
-        ? null
-        : { checked: next, completedAt: next ? now : null },
-      (store, model) => {
-        setTodoChecked(store, model, next ?? !model.props.checked, now);
-      }
-    );
+    return this.applyValues(id, before => ({
+      checked: !before.checked,
+      completedAt: before.checked ? null : now,
+    }));
   }
 
   /**
-   * Reverts the change `token` came from, but only while it is still the
-   * latest one; otherwise it does nothing and returns false. It restores the
-   * values from before that change, even over an edit made since. Like the
-   * setters it rejects when the doc is trashed or missing, and then the
-   * token stays valid.
+   * Optimistic write: shows `decide(current values)` right away, then writes
+   * the same decision to the source doc (serialised). A failed write takes
+   * the optimistic values back.
    */
-  async undo(token: TasksUndoToken): Promise<boolean> {
-    await this.writeQueue.catch(() => {});
-    const entry = this.undoEntry;
-    if (!entry || entry.token !== token) return false;
-    const { before } = entry;
-    const restoredAt = before.completedAt ?? this.clock.now();
-    if (entry.kind === 'due') {
-      await this.change(
-        token.taskId,
-        'due',
-        { due: before.due },
-        (store, model) => writeDue(store, model, before.due),
-        false
-      );
-    } else if (entry.kind === 'priority') {
-      await this.change(
-        token.taskId,
-        'priority',
-        { priority: before.priority },
-        (store, model) => writePriority(store, model, before.priority),
-        false
-      );
-    } else {
-      await this.change(
-        token.taskId,
-        'toggle',
-        {
-          checked: before.checked,
-          completedAt: before.checked ? restoredAt : null,
-        },
-        (store, model) => {
-          setTodoChecked(store, model, before.checked, restoredAt);
-        },
-        false
-      );
-    }
-    if (this.undoEntry === entry) this.undoEntry = null;
-    return true;
-  }
-
-  override dispose() {
-    for (const entry of this.overlay$.value.values()) {
-      clearTimeout(entry.timer);
-    }
-    super.dispose();
-  }
-
-  /** Current indexed row, if the index can answer synchronously. */
-  private readRow(id: string): IndexedTask | undefined {
-    const raw = this.rawRow(id);
-    if (!raw) return undefined;
-    const entry = this.overlay$.value.get(id);
-    return entry ? applyPatch(raw, entry.patch) : raw;
-  }
-
-  private startPruning() {
-    const subscription = new Subscription();
-    subscription.add(
-      combineLatest([this.rows$, this.pruneKick$.pipe(startWith(undefined))])
-        .pipe(observeOn(asapScheduler))
-        .subscribe(([rows]) => this.prune(rows))
-    );
-    subscription.add(
-      this.indexer.state$.subscribe(state => {
-        const idle = state.completed && state.indexing === 0;
-        for (const entry of this.overlay$.value.values()) {
-          if (entry.pending > 0) continue;
-          if (!idle) entry.busySeen = true;
-          else if (entry.busySeen) entry.idleSeen = true;
-        }
-        if (idle) this.pruneKick$.next();
-      })
-    );
-    return subscription;
-  }
-
-  private prune(rows: IndexedTask[]) {
-    const byId = new Map(rows.map(r => [taskId(r), r]));
-    for (const [id, entry] of this.overlay$.value) {
-      const row = byId.get(id);
-      if (row && isReflected(row, entry)) this.removeOverlay(id);
-    }
-  }
-
-  /**
-   * Optimistic write: show `patch` right away, then write to the source doc
-   * (serialised). On failure only this call's patch keys are dropped.
-   */
-  private change(
+  private applyValues(
     id: string,
-    kind: UndoEntry['kind'],
-    patch: OverlayPatch | null,
-    write: (store: Store, model: ListBlockModel) => void,
-    recordUndo = true
-  ): Promise<TasksUndoToken> {
+    decide: (before: TaskValues) => Patch
+  ): Promise<TasksUndo> {
     let ref: { docId: string; blockId: string };
     try {
       ref = splitTaskId(id);
     } catch (error) {
       return Promise.reject(error);
     }
-    if (patch) this.startOverlay(id, patch);
+    const row = this.rawRow(id);
+    const entry = this.overlay$.value.get(id);
+    const shown = row && (entry ? applyPatch(row, entry.patch) : row);
+    const optimistic = shown && decide(valuesOf(shown));
+    const prevPatch = optimistic
+      ? this.startOverlay(id, ref.docId, optimistic)
+      : {};
 
     const run = this.writeQueue
       .catch(() => {})
-      .then(async (): Promise<TasksUndoToken> => {
+      .then(async (): Promise<TasksUndo> => {
         try {
-          const before = await this.writeBlock(ref, (store, model) => {
-            const values: TaskValues = {
-              due: model.props.due ?? null,
-              priority: (model.props.priority ?? 0) as TaskPriority,
-              checked: model.props.checked === true,
-              completedAt: model.props.completedAt ?? null,
-            };
-            write(store, model);
-            return values;
-          });
-          if (patch) this.finishOverlay(id);
-          const token: TasksUndoToken = { taskId: id };
-          if (recordUndo) this.undoEntry = { token, kind, before };
-          return token;
+          const { before, changes } = await this.writeBlock(
+            ref,
+            (store, model) => {
+              const before: TaskValues = {
+                due: model.props.due ?? null,
+                priority: (model.props.priority ?? 0) as TaskPriority,
+                checked: model.props.checked === true,
+                completedAt: model.props.completedAt ?? null,
+              };
+              const changes = decide(before);
+              if (changes.due !== undefined) {
+                writeProp(store, model, 'due', changes.due);
+              }
+              if (changes.priority !== undefined) {
+                writeProp(store, model, 'priority', changes.priority || null);
+              }
+              if (changes.checked !== undefined) {
+                const at = changes.completedAt ?? this.clock.now();
+                setTodoChecked(store, model, changes.checked, at);
+              }
+              return { before, changes };
+            }
+          );
+          if (optimistic) this.settleOverlay(id, ref.docId).catch(() => {});
+          // Only what this write changed is written back.
+          const previous: Patch = {};
+          for (const key of Object.keys(changes) as (keyof TaskValues)[]) {
+            Object.assign(previous, { [key]: before[key] });
+          }
+          return async () => {
+            await this.applyValues(id, () => previous);
+          };
         } catch (error) {
-          if (patch) this.failOverlay(id, patch);
+          if (optimistic) this.failOverlay(id, optimistic, prevPatch);
           throw error;
         }
       });
@@ -707,58 +650,79 @@ export class TasksService extends Service {
     }
   }
 
-  private startOverlay(id: string, patch: OverlayPatch) {
+  /** Docs with a recent write of ours still waiting to show in the index. */
+  private heldDocs() {
+    const now = Date.now();
+    const docs = new Set<string>();
+    for (const entry of this.overlay$.value.values()) {
+      if (now - entry.since < INDEX_WAIT_MS) docs.add(entry.docId);
+    }
+    return docs;
+  }
+
+  /** Returns the patch the entry had before, for `failOverlay`. */
+  private startOverlay(id: string, docId: string, patch: Patch) {
     const entries = new Map(this.overlay$.value);
     const existing = entries.get(id);
-    if (existing) clearTimeout(existing.timer);
-    const raw = existing ? undefined : this.rawRow(id);
     entries.set(id, {
+      docId,
+      since: Date.now(),
       patch: { ...existing?.patch, ...patch },
-      baseline: existing ? existing.baseline : raw && valuesOf(raw),
-      pending: (existing?.pending ?? 0) + 1,
-      busySeen: false,
-      idleSeen: false,
-      timer: setTimeout(
-        () => this.removeOverlay(id),
-        OVERLAY_SAFETY_TIMEOUT_MS
-      ),
+      writes: (existing?.writes ?? 0) + 1,
+      settledAt: null,
     });
     this.overlay$.next(entries);
+    return existing?.patch ?? {};
   }
 
-  private finishOverlay(id: string) {
-    const entry = this.overlay$.value.get(id);
-    if (!entry) return;
-    entry.pending--;
-    entry.busySeen = false;
-    entry.idleSeen = false;
-    this.pruneKick$.next();
+  /**
+   * The write is done; the entry goes at the first rows$ emission after the
+   * indexer has processed the doc, or after `INDEX_WAIT_MS` (it doesn't while
+   * paused, in battery-save mode, or if the doc is never indexed).
+   */
+  private async settleOverlay(id: string, docId: string) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        this.indexer.waitForDocCompleted(docId),
+        new Promise<void>(resolve => {
+          timer = setTimeout(resolve, INDEX_WAIT_MS);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+      this.endWrite(id);
+    }
   }
 
-  private failOverlay(id: string, patch: OverlayPatch) {
+  /** One write of the entry is over; with none left it can be dropped. */
+  private endWrite(id: string) {
     const entry = this.overlay$.value.get(id);
     if (!entry) return;
-    entry.pending--;
-    const rest = { ...entry.patch };
+    entry.writes--;
+    if (entry.writes === 0) entry.settledAt = this.rowsSeq;
+  }
+
+  private dropSettledOverlays() {
+    const entries = new Map(this.overlay$.value);
+    for (const [id, entry] of entries) {
+      if (entry.settledAt !== null && entry.settledAt < this.rowsSeq) {
+        entries.delete(id);
+      }
+    }
+    if (entries.size !== this.overlay$.value.size) this.overlay$.next(entries);
+  }
+
+  /** Takes back this write's keys only, to what they were before it. */
+  private failOverlay(id: string, patch: Patch, before: Patch) {
+    const entry = this.overlay$.value.get(id);
+    if (!entry) return;
     for (const key of Object.keys(patch) as (keyof TaskValues)[]) {
-      delete rest[key];
+      if (key in before) Object.assign(entry.patch, { [key]: before[key] });
+      else delete entry.patch[key];
     }
-    if (Object.keys(rest).length === 0) {
-      this.removeOverlay(id);
-      return;
-    }
-    const entries = new Map(this.overlay$.value);
-    entries.set(id, { ...entry, patch: rest });
-    this.overlay$.next(entries);
-  }
-
-  private removeOverlay(id: string) {
-    const existing = this.overlay$.value.get(id);
-    if (!existing) return;
-    clearTimeout(existing.timer);
-    const entries = new Map(this.overlay$.value);
-    entries.delete(id);
-    this.overlay$.next(entries);
+    this.endWrite(id);
+    this.overlay$.next(new Map(this.overlay$.value));
   }
 
   private rawRow(id: string): IndexedTask | undefined {
@@ -769,29 +733,5 @@ export class TasksService extends Service {
       })
       .unsubscribe();
     return found;
-  }
-}
-
-function writeDue(store: Store, model: ListBlockModel, due: string | null) {
-  if (due === null) {
-    store.transact(() => {
-      delete model.props.due;
-    });
-  } else {
-    store.updateBlock(model, { due });
-  }
-}
-
-function writePriority(
-  store: Store,
-  model: ListBlockModel,
-  priority: TaskPriority
-) {
-  if (priority === 0) {
-    store.transact(() => {
-      delete model.props.priority;
-    });
-  } else {
-    store.updateBlock(model, { priority });
   }
 }

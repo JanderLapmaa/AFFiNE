@@ -24,8 +24,6 @@ export interface IndexedTask {
 export interface DocInfo {
   title: string;
   template: boolean;
-  /** Task lives in the hidden Tasks doc (always false until quick add exists). */
-  quickAdd: boolean;
   createDate?: number;
   updatedDate?: number;
 }
@@ -95,8 +93,7 @@ function buildItems(
   const items: Item[] = [];
   for (const task of tasks) {
     const doc = docs.get(task.docId);
-    // Unknown docs (deleted, trashed, not synced yet) and templates are not
-    // part of the task list.
+    // Trashed docs have no info, templates are not part of the task list.
     if (!doc || doc.template) continue;
     const completedAt = task.checked
       ? (task.completedAt ?? doc.updatedDate ?? doc.createDate ?? 0)
@@ -114,7 +111,6 @@ function buildItems(
         docTitle: doc.title,
         heading: task.heading,
         overdue: !task.checked && task.due !== null && task.due < today,
-        quickAdd: doc.quickAdd,
       },
       order: task.order ?? Number.POSITIVE_INFINITY,
       docCreatedAt: doc.createDate ?? 0,
@@ -138,7 +134,7 @@ function isInView(view: TasksViewId, row: TaskRow, today: string) {
     case 'completed':
       return row.checked;
     case 'inbox':
-      return row.due === null && row.priority === 0;
+      return row.due === null;
     case 'today':
       return row.due !== null && row.due <= today;
     case 'tomorrow':
@@ -284,15 +280,9 @@ export function buildView(
       return byDay(inView, false);
     case 'all': {
       const scheduled = inView.filter(i => i.row.due !== null);
-      const noDate = inView.filter(
-        i => i.row.due === null && i.row.priority !== 0
-      );
-      const inbox = inView.filter(
-        i => i.row.due === null && i.row.priority === 0
-      );
+      const inbox = inView.filter(i => i.row.due === null);
       return [
         group('scheduled', 'scheduled', scheduled, compareDueThenInGroup),
-        group('no-date', 'no-date', noDate, compareInGroup),
         group('inbox', 'inbox', inbox, compareDocNewestFirst),
       ].filter(g => g.rows.length > 0);
     }

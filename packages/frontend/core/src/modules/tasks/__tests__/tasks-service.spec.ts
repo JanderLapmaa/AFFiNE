@@ -5,7 +5,6 @@ import {
   BehaviorSubject,
   map,
   type Observable,
-  Subject,
   type Subscription,
   throwError,
 } from 'rxjs';
@@ -15,7 +14,7 @@ import { DocsService } from '../../doc/services/docs';
 import { WorkspaceService } from '../../workspace';
 import { TasksService } from '../services/tasks';
 import { TasksClockStore } from '../services/tasks-clock';
-import type { TaskGroup } from '../types';
+import type { TaskGroup, TasksViewId } from '../types';
 
 // Local-time timestamps, so the tests don't depend on the machine's timezone.
 const at = (y: number, m: number, d: number, h = 12, min = 0) =>
@@ -64,11 +63,6 @@ interface DocSpec {
   updatedDate?: number;
   trash?: boolean;
   isTemplate?: boolean;
-}
-
-/** Mimics block props: `updateBlock` skips `undefined` like the real store. */
-function fakeBlockModel(props: Record<string, unknown>) {
-  return { flavour: 'affine:list', props };
 }
 
 type FakeNode = ReturnType<typeof node>;
@@ -139,6 +133,7 @@ function setup(
   });
   const indexer = {
     state$: indexerState$,
+    waitForDocCompleted: vi.fn(async (_docId: string) => {}),
     search$: vi.fn(
       (_table: string, query: FakeQuery, opts: FakeSearchOptions) =>
         rows$.pipe(map(({ nodes }) => fakeSearch(nodes, query, opts)))
@@ -158,9 +153,12 @@ function setup(
     }),
   };
 
-  const models = new Map<string, ReturnType<typeof fakeBlockModel>>();
+  const models = new Map<
+    string,
+    { flavour: string; props: Record<string, unknown> }
+  >();
   for (const [key, props] of Object.entries(options.blocks ?? {})) {
-    models.set(key, fakeBlockModel({ ...props }));
+    models.set(key, { flavour: 'affine:list', props: { ...props } });
   }
   const opened: string[] = [];
   const released: string[] = [];
@@ -170,9 +168,10 @@ function setup(
       { id: 'doc-b', title: 'Doc B' },
     ]
   );
+  const records = new Set(docs$.value.map(d => d.id));
   const docsService = {
-    allNonTrashDocIds$: () =>
-      docs$.pipe(map(docs => docs.filter(d => !d.trash).map(d => d.id))),
+    allTrashDocIds$: () =>
+      docs$.pipe(map(docs => docs.filter(d => d.trash).map(d => d.id))),
     propertyValues$: () =>
       docs$.pipe(
         map(
@@ -203,20 +202,24 @@ function setup(
         )
       ),
     list: {
+      // Records come from their own list, so a gap in the streams below
+      // doesn't remove them.
       doc$: (id: string) => ({
         get value() {
+          if (!records.has(id)) return undefined;
           const doc = docs$.value.find(d => d.id === id);
-          return doc ? { trash$: { value: !!doc.trash } } : undefined;
+          return { trash$: { value: !!doc?.trash } };
         },
       }),
     },
     open: vi.fn((docId: string) => {
       opened.push(docId);
+      // `updateBlock` skips `undefined` like the real store.
       const store = {
         readonly: false,
         transact: (fn: () => void) => fn(),
         updateBlock: (
-          model: ReturnType<typeof fakeBlockModel>,
+          model: { props: Record<string, unknown> },
           props: Record<string, unknown>
         ) => {
           for (const [k, v] of Object.entries(props)) {
@@ -251,40 +254,35 @@ function setup(
     DocsService,
     TasksClockStore,
   ]);
-  const service = framework.provider().get(TasksService);
   return {
-    service,
+    service: framework.provider().get(TasksService),
     clock,
     rows$,
     indexer,
     indexerState$,
     docs$,
-    docsService,
     opened,
     released,
     /** the index catches up with the given tasks */
     index: (tasks: TaskSpec[]) => rows$.next({ nodes: tasks.map(node) }),
-    /** the indexer reports it is idle again */
-    idle: () =>
+    setIndexing: (busy: boolean) =>
       indexerState$.next({
         ...indexerState$.value,
-        completed: true,
-        indexing: 0,
+        completed: !busy,
+        indexing: busy ? 1 : 0,
       }),
-    /** the indexer starts working on a change */
-    busy: () =>
-      indexerState$.next({
-        ...indexerState$.value,
-        completed: false,
-        indexing: 1,
-      }),
+    deleteDocs: () => records.clear(),
+    trashAll: (trash: boolean) =>
+      docs$.next(docs$.value.map(d => ({ ...d, trash }))),
     props: (key: string) => models.get(key)?.props,
   };
 }
 
-/** Lets scheduled (asap) work run. */
+type Env = ReturnType<typeof setup>;
+
+/** Lets scheduled (microtask) work run. */
 const flush = async () => {
-  for (let i = 0; i < 5; i++) await Promise.resolve();
+  for (let i = 0; i < 10; i++) await Promise.resolve();
 };
 
 const subscriptions: Subscription[] = [];
@@ -311,430 +309,107 @@ const shape = (groups: TaskGroup[]) =>
     g.rows.map(r => r.blockId),
   ]);
 
-const viewOf = (
-  env: ReturnType<typeof setup>,
-  viewId: Parameters<TasksService['view$']>[0]
-) => watch(env.service.view$(viewId));
+const viewOf = (env: Env, viewId: TasksViewId) =>
+  watch(env.service.view$(viewId));
 
-describe('TasksService view membership', () => {
-  it('only lists todo list blocks', () => {
-    const env = setup({
-      tasks: [
+const blockIds = (groups: TaskGroup[]) =>
+  groups.flatMap(g => g.rows.map(r => r.blockId));
+
+type Expected = ReturnType<typeof shape>;
+
+describe('view membership and grouping', () => {
+  const D27 = '2026-10-27';
+  const D28 = '2026-10-28';
+  const D29 = '2026-10-29';
+
+  it.each<[string, TasksViewId, TaskSpec[], Expected]>([
+    [
+      'only todo list blocks are listed',
+      'all',
+      [
         { blockId: 't1' },
         { blockId: 'bullet', listType: 'bulleted' },
         { blockId: 'numbered', listType: 'numbered' },
       ],
-    });
-    expect(shape(viewOf(env, 'all').value)).toEqual([['inbox', '', ['t1']]]);
-  });
-
-  it('reads every task when they exceed one indexer window', () => {
-    const tasks: TaskSpec[] = [];
-    for (let i = 0; i < 25_000; i++) {
-      tasks.push({ docId: `doc-${i % 7}`, blockId: `t${i}` });
-    }
-    const docs = Array.from({ length: 7 }, (_, i) => ({ id: `doc-${i}` }));
-    const env = setup({ tasks, docs });
-    const all = viewOf(env, 'all');
-    const state = watch(env.service.state$);
-    return flush().then(() => {
-      expect(state.value).toEqual({ status: 'ready' });
-      const ids = all.value.flatMap(g => g.rows.map(r => r.blockId));
-      expect(new Set(ids).size).toBe(25_000);
-    });
-  });
-
-  it('keeps the other docs when one doc is too big to read', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      const tasks: TaskSpec[] = [{ docId: 'small', blockId: 's1' }];
-      for (let i = 0; i < 10_500; i++) {
-        tasks.push({ docId: 'huge', blockId: `h${i}` });
-      }
-      const env = setup({
-        tasks,
-        docs: [{ id: 'small' }, { id: 'huge' }],
-      });
-      const all = viewOf(env, 'all');
-      await new Promise(resolve => setTimeout(resolve, 20));
-      const ids = all.value.flatMap(g => g.rows.map(r => r.blockId));
-      expect(ids).toContain('s1');
-      expect(ids.length).toBeGreaterThan(1);
-      expect(ids.length).toBeLessThan(10_501);
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn.mock.calls[0][0]).toContain('huge');
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it('stops reading batches once a newer read supersedes it', async () => {
-    const tasks: TaskSpec[] = [];
-    for (let i = 0; i < 15_000; i++) {
-      tasks.push({ docId: `doc-${i % 3}`, blockId: `t${i}` });
-    }
-    const env = setup({
-      tasks,
-      docs: [{ id: 'doc-0' }, { id: 'doc-1' }, { id: 'doc-2' }],
-    });
-    const realSearch = env.indexer.search.getMockImplementation()!;
-    const gates: (() => void)[] = [];
-    env.indexer.search.mockImplementation((...args) => {
-      return new Promise(resolve => {
-        gates.push(() => resolve(realSearch(...args)));
-      }) as never;
-    });
-    viewOf(env, 'all');
-    const tick = () => new Promise(resolve => setTimeout(resolve, 5));
-    await tick();
-    expect(gates.length).toBe(1); // first read waits on its first batch
-    env.index(tasks); // a newer emission supersedes it
-    await tick();
-    expect(gates.length).toBe(2);
-    gates[0](); // the stale batch finishes
-    await tick();
-    expect(gates.length).toBe(2); // ...and it asks for no more batches
-    gates[1](); // the current read carries on
-    await tick();
-    expect(gates.length).toBe(3);
-  });
-
-  it('keeps reading small task lists in one query', () => {
-    const env = setup({ tasks: [{ blockId: 't1' }, { blockId: 't2' }] });
-    expect(shape(viewOf(env, 'inbox').value)).toEqual([
-      ['doc', 'doc-a', ['t1', 't2']],
-    ]);
-  });
-
-  it('Inbox holds undated, unprioritised tasks only', () => {
-    const env = setup({
-      tasks: [
+      [['inbox', '', ['t1']]],
+    ],
+    [
+      'Inbox is every undated task, a priority alone keeps it there',
+      'inbox',
+      [
         { blockId: 'plain' },
-        { blockId: 'dated', due: '2026-10-30' },
+        { blockId: 'dated', due: D29 },
         { blockId: 'prio', priority: 2 },
       ],
-    });
-    expect(shape(viewOf(env, 'inbox').value)).toEqual([
-      ['doc', 'doc-a', ['plain']],
-    ]);
-  });
-
-  it('Today shows overdue first, then today, and nothing later', () => {
-    const env = setup({
-      tasks: [
+      [['doc', 'doc-a', ['prio', 'plain']]],
+    ],
+    [
+      'an out-of-range priority and a malformed date are ignored',
+      'inbox',
+      [{ blockId: 'odd', priority: 9, due: 'tomorrow' }],
+      [['doc', 'doc-a', ['odd']]],
+    ],
+    [
+      'Today: overdue first, then today, nothing later or undated',
+      'today',
+      [
         { blockId: 'late', due: '2026-10-25' },
-        { blockId: 'later', due: '2026-10-27' },
-        { blockId: 'now', due: '2026-10-28' },
-        { blockId: 'tomorrow', due: '2026-10-29' },
+        { blockId: 'later', due: D27 },
+        { blockId: 'now', due: D28 },
+        { blockId: 'tomorrow', due: D29 },
         { blockId: 'nodate' },
       ],
-    });
-    const groups = viewOf(env, 'today').value;
-    expect(shape(groups)).toEqual([
-      ['overdue', '', ['late', 'later']],
-      ['day', '2026-10-28', ['now']],
-    ]);
-    expect(groups[0].rows.every(r => r.overdue)).toBe(true);
-    expect(groups[1].rows[0].overdue).toBe(false);
-  });
-
-  it('Tomorrow shows only tasks due the next day', () => {
-    const env = setup({
-      tasks: [
-        { blockId: 'now', due: '2026-10-28' },
-        { blockId: 'tmrw', due: '2026-10-29' },
-        { blockId: 'later', due: '2026-10-30' },
-        { blockId: 'late', due: '2026-10-27' },
+      [
+        ['overdue', '', ['late', 'later']],
+        ['day', D28, ['now']],
       ],
-    });
-    expect(shape(viewOf(env, 'tomorrow').value)).toEqual([
-      ['day', '2026-10-29', ['tmrw']],
-    ]);
-  });
-
-  it('Next 7 Days covers overdue through today+6, grouped by day', () => {
-    const env = setup({
-      tasks: [
+    ],
+    [
+      'Tomorrow: only the next day',
+      'tomorrow',
+      [
+        { blockId: 'now', due: D28 },
+        { blockId: 'tmrw', due: D29 },
+        { blockId: 'later', due: '2026-10-30' },
+        { blockId: 'late', due: D27 },
+      ],
+      [['day', D29, ['tmrw']]],
+    ],
+    [
+      'Next 7 Days: overdue through today+6, grouped by day',
+      'next7',
+      [
         { blockId: 'late', due: '2026-10-20' },
-        { blockId: 'd0', due: '2026-10-28' },
+        { blockId: 'd0', due: D28 },
         { blockId: 'd3', due: '2026-10-31' },
         { blockId: 'd6', due: '2026-11-03' },
         { blockId: 'd7', due: '2026-11-04' },
       ],
-    });
-    expect(shape(viewOf(env, 'next7').value)).toEqual([
-      ['overdue', '', ['late']],
-      ['day', '2026-10-28', ['d0']],
-      ['day', '2026-10-31', ['d3']],
-      ['day', '2026-11-03', ['d6']],
-    ]);
-  });
-
-  it('All splits Scheduled, No date and Inbox', () => {
-    const env = setup({
-      tasks: [
+      [
+        ['overdue', '', ['late']],
+        ['day', D28, ['d0']],
+        ['day', '2026-10-31', ['d3']],
+        ['day', '2026-11-03', ['d6']],
+      ],
+    ],
+    [
+      'All: Scheduled by date, then the Inbox',
+      'all',
+      [
         { blockId: 'inbox' },
         { blockId: 'prio', priority: 3 },
         { blockId: 'far', due: '2026-12-01' },
         { blockId: 'late', due: '2026-10-01' },
       ],
-    });
-    expect(shape(viewOf(env, 'all').value)).toEqual([
-      ['scheduled', '', ['late', 'far']],
-      ['no-date', '', ['prio']],
-      ['inbox', '', ['inbox']],
-    ]);
-  });
-
-  it('a task with only a priority is in All and No date but not Inbox', () => {
-    const env = setup({ tasks: [{ blockId: 'prio', priority: 1 }] });
-    expect(viewOf(env, 'inbox').value).toEqual([]);
-    expect(shape(viewOf(env, 'all').value)).toEqual([
-      ['no-date', '', ['prio']],
-    ]);
-  });
-
-  it('ignores an out-of-range priority and a malformed due date', () => {
-    const env = setup({
-      tasks: [{ blockId: 'odd', priority: 9, due: 'tomorrow' }],
-    });
-    expect(shape(viewOf(env, 'inbox').value)).toEqual([
-      ['doc', 'doc-a', ['odd']],
-    ]);
-  });
-
-  it('exposes the row fields', () => {
-    const env = setup({
-      tasks: [
-        {
-          blockId: 't1',
-          title: 'Call bank',
-          due: '2026-10-28',
-          priority: 3,
-          heading: 'Follow ups',
-        },
+      [
+        ['scheduled', '', ['late', 'far']],
+        ['inbox', '', ['inbox', 'prio']],
       ],
-      docs: [{ id: 'doc-a', title: 'Kickoff' }],
-    });
-    expect(viewOf(env, 'today').value[0].rows[0]).toEqual({
-      id: 'doc-a:t1',
-      docId: 'doc-a',
-      blockId: 't1',
-      title: 'Call bank',
-      due: '2026-10-28',
-      priority: 3,
-      checked: false,
-      completedAt: null,
-      docTitle: 'Kickoff',
-      heading: 'Follow ups',
-      overdue: false,
-      quickAdd: false,
-    });
-  });
-});
-
-describe('TasksService midnight edges', () => {
-  const tasks: TaskSpec[] = [
-    { blockId: 'yesterday', due: '2026-10-27' },
-    { blockId: 'today', due: '2026-10-28' },
-  ];
-
-  it('at 23:59 a task due that day is due today, not overdue', () => {
-    const env = setup({ now: at(2026, 10, 28, 23, 59), tasks });
-    expect(shape(viewOf(env, 'today').value)).toEqual([
-      ['overdue', '', ['yesterday']],
-      ['day', '2026-10-28', ['today']],
-    ]);
+    ],
+  ])('%s', (_name, view, tasks, expected) => {
+    expect(shape(viewOf(setup({ tasks }), view).value)).toEqual(expected);
   });
 
-  it('at 00:00 the previous day is overdue and the new day is today', () => {
-    const env = setup({ now: at(2026, 10, 29, 0, 0), tasks });
-    expect(shape(viewOf(env, 'today').value)).toEqual([
-      ['overdue', '', ['yesterday', 'today']],
-    ]);
-    expect(shape(viewOf(env, 'tomorrow').value)).toEqual([]);
-  });
-
-  it('at 00:00 what was due tomorrow becomes due today', () => {
-    const env = setup({
-      now: at(2026, 10, 29, 0, 0),
-      tasks: [{ blockId: 't', due: '2026-10-29' }],
-    });
-    expect(shape(viewOf(env, 'today').value)).toEqual([
-      ['day', '2026-10-29', ['t']],
-    ]);
-  });
-
-  it('rolls over at local midnight while the view is open', () => {
-    vi.useFakeTimers();
-    let now = at(2026, 10, 28, 23, 59);
-    vi.setSystemTime(now);
-    const env = setup({ now, tasks: [{ blockId: 't', due: '2026-10-28' }] });
-    env.clock.now.mockImplementation(() => Date.now());
-    const today = viewOf(env, 'today');
-    expect(shape(today.value)).toEqual([['day', '2026-10-28', ['t']]]);
-
-    now = at(2026, 10, 29, 0, 1);
-    vi.setSystemTime(now);
-    vi.advanceTimersByTime(2 * 60 * 1000);
-    expect(shape(today.value)).toEqual([['overdue', '', ['t']]]);
-  });
-});
-
-describe('TasksService completed tasks', () => {
-  it('keeps a task due today crossed off below the open ones', () => {
-    const env = setup({
-      tasks: [
-        {
-          blockId: 'done',
-          due: '2026-10-28',
-          checked: true,
-          completedAt: NOON,
-        },
-        { blockId: 'open', due: '2026-10-28' },
-      ],
-    });
-    const groups = viewOf(env, 'today').value;
-    expect(shape(groups)).toEqual([['day', '2026-10-28', ['open', 'done']]]);
-    const done = groups[0].rows[1];
-    expect(done.checked).toBe(true);
-    expect(done.overdue).toBe(false);
-    expect(done.completedAt).toBe(NOON);
-  });
-
-  it('keeps a task due in the future visible while checked', () => {
-    const env = setup({
-      tasks: [
-        {
-          blockId: 'done',
-          due: '2026-10-29',
-          checked: true,
-          completedAt: NOON,
-        },
-      ],
-    });
-    expect(shape(viewOf(env, 'tomorrow').value)).toEqual([
-      ['day', '2026-10-29', ['done']],
-    ]);
-  });
-
-  it('hides a checked task once its due date has passed, never overdue', () => {
-    const env = setup({
-      tasks: [
-        {
-          blockId: 'done',
-          due: '2026-10-27',
-          checked: true,
-          completedAt: at(2026, 10, 27, 9),
-        },
-      ],
-    });
-    expect(viewOf(env, 'today').value).toEqual([]);
-    expect(viewOf(env, 'next7').value).toEqual([]);
-    expect(viewOf(env, 'all').value).toEqual([]);
-    expect(shape(viewOf(env, 'completed').value)).toEqual([
-      ['completed-day', '2026-10-27', ['done']],
-    ]);
-  });
-
-  it('keeps an undated completed task in Inbox until the end of its day', () => {
-    const tasks: TaskSpec[] = [
-      {
-        blockId: 'done',
-        checked: true,
-        completedAt: at(2026, 10, 27, 18, 0),
-      },
-    ];
-    const lateEvening = setup({ now: at(2026, 10, 27, 23, 59), tasks });
-    expect(shape(viewOf(lateEvening, 'inbox').value)).toEqual([
-      ['doc', 'doc-a', ['done']],
-    ]);
-    const nextMorning = setup({ now: at(2026, 10, 28, 0, 0), tasks });
-    expect(viewOf(nextMorning, 'inbox').value).toEqual([]);
-    expect(shape(viewOf(nextMorning, 'completed').value)).toEqual([
-      ['completed-day', '2026-10-27', ['done']],
-    ]);
-  });
-
-  it('falls back to the doc updated date when completedAt is missing', () => {
-    const env = setup({
-      tasks: [
-        { docId: 'doc-a', blockId: 'fresh', checked: true },
-        { docId: 'doc-b', blockId: 'stale', checked: true },
-      ],
-      docs: [
-        { id: 'doc-a', updatedDate: at(2026, 10, 28, 8) },
-        { id: 'doc-b', updatedDate: at(2026, 10, 20, 8) },
-      ],
-    });
-    const inbox = viewOf(env, 'inbox').value;
-    expect(inbox.flatMap(g => g.rows.map(r => r.blockId))).toEqual(['fresh']);
-    expect(inbox[0].rows[0].completedAt).toBe(at(2026, 10, 28, 8));
-    expect(shape(viewOf(env, 'completed').value)).toEqual([
-      ['completed-day', '2026-10-28', ['fresh']],
-      ['completed-day', '2026-10-20', ['stale']],
-    ]);
-  });
-
-  it('prefers completedAt over the doc updated date', () => {
-    const env = setup({
-      tasks: [{ blockId: 't', checked: true, completedAt: at(2026, 10, 25) }],
-      docs: [{ id: 'doc-a', updatedDate: at(2026, 10, 28) }],
-    });
-    expect(shape(viewOf(env, 'completed').value)).toEqual([
-      ['completed-day', '2026-10-25', ['t']],
-    ]);
-  });
-
-  it('ignores a stale completedAt on an unchecked task', () => {
-    const env = setup({
-      tasks: [
-        { blockId: 't', due: '2026-10-28', completedAt: at(2026, 10, 1) },
-      ],
-    });
-    expect(viewOf(env, 'completed').value).toEqual([]);
-    expect(viewOf(env, 'today').value[0].rows[0].completedAt).toBeNull();
-  });
-
-  it('Completed lists newest first, grouped by completion day', () => {
-    const env = setup({
-      tasks: [
-        { blockId: 'old', checked: true, completedAt: at(2026, 10, 20, 9) },
-        { blockId: 'a', checked: true, completedAt: at(2026, 10, 28, 8) },
-        { blockId: 'b', checked: true, completedAt: at(2026, 10, 28, 11) },
-        { blockId: 'open' },
-        {
-          blockId: 'dated',
-          checked: true,
-          due: '2026-10-21',
-          completedAt: at(2026, 10, 27, 10),
-        },
-      ],
-    });
-    const groups = viewOf(env, 'completed').value;
-    expect(shape(groups)).toEqual([
-      ['completed-day', '2026-10-28', ['b', 'a']],
-      ['completed-day', '2026-10-27', ['dated']],
-      ['completed-day', '2026-10-20', ['old']],
-    ]);
-    expect(groups[1].rows[0].due).toBe('2026-10-21');
-  });
-
-  it('puts a reopened task back into its normal view', () => {
-    const env = setup({
-      tasks: [
-        { blockId: 't', due: '2026-10-28', checked: true, completedAt: NOON },
-      ],
-    });
-    const today = viewOf(env, 'today');
-    expect(today.value[0].rows[0].checked).toBe(true);
-    env.rows$.next({ nodes: [node({ blockId: 't', due: '2026-10-28' })] });
-    expect(today.value[0].rows[0].checked).toBe(false);
-    expect(viewOf(env, 'completed').value).toEqual([]);
-  });
-});
-
-describe('TasksService grouping and ordering', () => {
   it('groups Inbox by doc, newest created doc first', () => {
     const env = setup({
       tasks: [
@@ -750,11 +425,7 @@ describe('TasksService grouping and ordering', () => {
           updatedDate: at(2026, 10, 28),
         },
         { id: 'mid', createDate: at(2026, 10, 1) },
-        {
-          id: 'new',
-          createDate: at(2026, 10, 20),
-          updatedDate: at(2026, 10, 1),
-        },
+        { id: 'new', createDate: at(2026, 10, 20) },
       ],
     });
     expect(shape(viewOf(env, 'inbox').value)).toEqual([
@@ -765,7 +436,7 @@ describe('TasksService grouping and ordering', () => {
   });
 
   it('orders rows: open first, priority high to low, position, doc id', () => {
-    const due = '2026-10-29';
+    const due = D29;
     const env = setup({
       tasks: [
         { docId: 'doc-b', blockId: 'b-first', due, order: 0 },
@@ -785,7 +456,7 @@ describe('TasksService grouping and ordering', () => {
         { docId: 'doc-a', blockId: 'a-nopos', due },
       ],
     });
-    expect(viewOf(env, 'tomorrow').value[0].rows.map(r => r.blockId)).toEqual([
+    expect(blockIds(viewOf(env, 'tomorrow').value)).toEqual([
       'a-high',
       'a-low',
       'a-first',
@@ -796,79 +467,17 @@ describe('TasksService grouping and ordering', () => {
     ]);
   });
 
-  it('exposes the source doc title and nearest heading on each row', () => {
-    const env = setup({
-      tasks: [{ blockId: 't', heading: 'Next steps' }],
-      docs: [{ id: 'doc-a', title: 'Project Kickoff' }],
-    });
-    const row = viewOf(env, 'inbox').value[0].rows[0];
-    expect(row.docTitle).toBe('Project Kickoff');
-    expect(row.heading).toBe('Next steps');
-  });
-});
-
-describe('TasksService doc filtering', () => {
-  const tasks: TaskSpec[] = [
-    { docId: 'live', blockId: 'live' },
-    { docId: 'trashed', blockId: 'trashed' },
-    { docId: 'template', blockId: 'template' },
-    { docId: 'gone', blockId: 'gone' },
-  ];
-  const docs: DocSpec[] = [
-    { id: 'live' },
-    { id: 'trashed', trash: true },
-    { id: 'template', isTemplate: true },
-  ];
-
-  it('leaves out tasks of trashed, template and unknown docs', () => {
-    const env = setup({ tasks, docs });
-    for (const view of ['inbox', 'all'] as const) {
-      const ids = viewOf(env, view).value.flatMap(g =>
-        g.rows.map(r => r.blockId)
-      );
-      expect(ids).toEqual(['live']);
-    }
-    expect(watch(env.service.counts$).value.inbox).toBe(1);
-  });
-
-  it('brings tasks back when a doc is restored from the trash', () => {
-    const env = setup({ tasks, docs });
-    const inbox = viewOf(env, 'inbox');
-    env.docs$.next(env.docs$.value.map(d => ({ ...d, trash: false })));
-    expect(inbox.value.flatMap(g => g.rows.map(r => r.blockId))).toEqual(
-      expect.arrayContaining(['live', 'trashed'])
-    );
-  });
-
-  it('hides completed tasks of trashed docs from Completed too', () => {
-    const env = setup({
-      tasks: [
-        { docId: 'trashed', blockId: 'x', checked: true, completedAt: NOON },
-      ],
-      docs,
-    });
-    expect(viewOf(env, 'completed').value).toEqual([]);
-  });
-});
-
-describe('TasksService counts', () => {
   it('counts unchecked tasks per view', () => {
     const env = setup({
       tasks: [
         { blockId: 'inbox1' },
-        { blockId: 'inbox2' },
+        { blockId: 'prio', priority: 2 },
         { blockId: 'late', due: '2026-10-20' },
-        { blockId: 'today', due: '2026-10-28' },
-        { blockId: 'tmrw', due: '2026-10-29' },
+        { blockId: 'today', due: D28 },
+        { blockId: 'tmrw', due: D29 },
         { blockId: 'd5', due: '2026-11-02' },
         { blockId: 'far', due: '2027-01-01' },
-        { blockId: 'prio', priority: 2 },
-        {
-          blockId: 'done',
-          due: '2026-10-28',
-          checked: true,
-          completedAt: NOON,
-        },
+        { blockId: 'done', due: D28, checked: true, completedAt: NOON },
       ],
     });
     expect(watch(env.service.counts$).value).toEqual({
@@ -876,14 +485,280 @@ describe('TasksService counts', () => {
       today: 2,
       tomorrow: 1,
       next7: 4,
-      all: 8,
+      all: 7,
       completed: 1,
     });
     expect(watch(env.service.inboxCount$).value).toBe(2);
   });
 });
 
-describe('TasksService triage', () => {
+describe('midnight edges', () => {
+  it.each<[string, number, TasksViewId, TaskSpec[], Expected]>([
+    [
+      '23:59: a task due that day is due today, not overdue',
+      at(2026, 10, 28, 23, 59),
+      'today',
+      [
+        { blockId: 'yesterday', due: '2026-10-27' },
+        { blockId: 'today', due: '2026-10-28' },
+      ],
+      [
+        ['overdue', '', ['yesterday']],
+        ['day', '2026-10-28', ['today']],
+      ],
+    ],
+    [
+      '00:00: the previous day is overdue',
+      at(2026, 10, 29, 0, 0),
+      'today',
+      [
+        { blockId: 'yesterday', due: '2026-10-27' },
+        { blockId: 'today', due: '2026-10-28' },
+      ],
+      [['overdue', '', ['yesterday', 'today']]],
+    ],
+    [
+      '00:00: what was due tomorrow is due today',
+      at(2026, 10, 29, 0, 0),
+      'today',
+      [{ blockId: 't', due: '2026-10-29' }],
+      [['day', '2026-10-29', ['t']]],
+    ],
+    [
+      '00:00: Tomorrow moves on a day',
+      at(2026, 10, 29, 0, 0),
+      'tomorrow',
+      [{ blockId: 't', due: '2026-10-29' }],
+      [],
+    ],
+  ])('%s', (_name, now, view, tasks, expected) => {
+    expect(shape(viewOf(setup({ now, tasks }), view).value)).toEqual(expected);
+  });
+
+  it('rolls over at local midnight while the view is open', () => {
+    vi.useFakeTimers();
+    const now = at(2026, 10, 28, 23, 59);
+    vi.setSystemTime(now);
+    const env = setup({ now, tasks: [{ blockId: 't', due: '2026-10-28' }] });
+    env.clock.now.mockImplementation(() => Date.now());
+    const today = viewOf(env, 'today');
+    expect(shape(today.value)).toEqual([['day', '2026-10-28', ['t']]]);
+
+    vi.setSystemTime(at(2026, 10, 29, 0, 1));
+    vi.advanceTimersByTime(2 * 60 * 1000);
+    expect(shape(today.value)).toEqual([['overdue', '', ['t']]]);
+  });
+});
+
+describe('completed tasks', () => {
+  const done = (spec: TaskSpec): TaskSpec => ({
+    checked: true,
+    completedAt: NOON,
+    ...spec,
+  });
+
+  it.each<[string, number | undefined, TaskSpec[], [TasksViewId, Expected][]]>([
+    [
+      'due today: stays crossed off below the open ones',
+      undefined,
+      [
+        done({ blockId: 'done', due: '2026-10-28' }),
+        { blockId: 'open', due: '2026-10-28' },
+      ],
+      [['today', [['day', '2026-10-28', ['open', 'done']]]]],
+    ],
+    [
+      'due in the future: visible while checked',
+      undefined,
+      [done({ blockId: 'done', due: '2026-10-29' })],
+      [['tomorrow', [['day', '2026-10-29', ['done']]]]],
+    ],
+    [
+      'due date passed: hidden everywhere but Completed, never overdue',
+      undefined,
+      [
+        done({
+          blockId: 'done',
+          due: '2026-10-27',
+          completedAt: at(2026, 10, 27, 9),
+        }),
+      ],
+      [
+        ['today', []],
+        ['next7', []],
+        ['all', []],
+        ['completed', [['completed-day', '2026-10-27', ['done']]]],
+      ],
+    ],
+    [
+      'undated: in Inbox until the end of its completion day',
+      at(2026, 10, 27, 23, 59),
+      [done({ blockId: 'done', completedAt: at(2026, 10, 27, 18) })],
+      [['inbox', [['doc', 'doc-a', ['done']]]]],
+    ],
+    [
+      'undated: gone from Inbox the next morning',
+      at(2026, 10, 28, 0, 0),
+      [done({ blockId: 'done', completedAt: at(2026, 10, 27, 18) })],
+      [
+        ['inbox', []],
+        ['completed', [['completed-day', '2026-10-27', ['done']]]],
+      ],
+    ],
+    [
+      'a stale completedAt on an unchecked task is ignored',
+      undefined,
+      [{ blockId: 't', due: '2026-10-28', completedAt: at(2026, 10, 1) }],
+      [['completed', []]],
+    ],
+  ])('%s', (_name, now, tasks, checks) => {
+    const env = setup({ now, tasks });
+    for (const [view, expected] of checks) {
+      expect(shape(viewOf(env, view).value)).toEqual(expected);
+    }
+  });
+
+  it('falls back to the doc updated date, but prefers completedAt', () => {
+    const env = setup({
+      tasks: [
+        { docId: 'doc-a', blockId: 'fresh', checked: true },
+        { docId: 'doc-b', blockId: 'stale', checked: true },
+        done({ docId: 'doc-a', blockId: 'own', completedAt: at(2026, 10, 25) }),
+      ],
+      docs: [
+        { id: 'doc-a', updatedDate: at(2026, 10, 28, 8) },
+        { id: 'doc-b', updatedDate: at(2026, 10, 20, 8) },
+      ],
+    });
+    expect(shape(viewOf(env, 'completed').value)).toEqual([
+      ['completed-day', '2026-10-28', ['fresh']],
+      ['completed-day', '2026-10-25', ['own']],
+      ['completed-day', '2026-10-20', ['stale']],
+    ]);
+    expect(viewOf(env, 'inbox').value[0].rows[0].completedAt).toBe(
+      at(2026, 10, 28, 8)
+    );
+  });
+});
+
+describe('doc filtering', () => {
+  const tasks: TaskSpec[] = [
+    { docId: 'live', blockId: 'live' },
+    { docId: 'trashed', blockId: 'trashed' },
+    { docId: 'template', blockId: 'template' },
+    { docId: 'no-record', blockId: 'no-record' },
+    { docId: 'trashed', blockId: 'x', checked: true, completedAt: NOON },
+  ];
+  const docs: DocSpec[] = [
+    { id: 'live' },
+    { id: 'trashed', trash: true },
+    { id: 'template', isTemplate: true },
+  ];
+
+  it('leaves out trashed and template docs and docs without a record', () => {
+    const env = setup({ tasks, docs });
+    for (const view of ['inbox', 'all'] as const) {
+      expect(blockIds(viewOf(env, view).value).sort()).toEqual(['live']);
+    }
+    expect(viewOf(env, 'completed').value).toEqual([]);
+    expect(watch(env.service.counts$).value.inbox).toBe(1);
+  });
+});
+
+describe('reading the index', () => {
+  it('reads every task when they exceed one indexer window', async () => {
+    const tasks: TaskSpec[] = [];
+    for (let i = 0; i < 25_000; i++) {
+      tasks.push({ docId: `doc-${i % 7}`, blockId: `t${i}` });
+    }
+    const docs = Array.from({ length: 7 }, (_, i) => ({ id: `doc-${i}` }));
+    const env = setup({ tasks, docs });
+    const all = viewOf(env, 'all');
+    const state = watch(env.service.state$);
+    await flush();
+    expect(state.value).toEqual({ status: 'ready' });
+    expect(new Set(blockIds(all.value)).size).toBe(25_000);
+  });
+
+  it('keeps the other docs when one doc is too big to read', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const tasks: TaskSpec[] = [{ docId: 'small', blockId: 's1' }];
+      for (let i = 0; i < 10_500; i++) {
+        tasks.push({ docId: 'huge', blockId: `h${i}` });
+      }
+      const env = setup({ tasks, docs: [{ id: 'small' }, { id: 'huge' }] });
+      const all = viewOf(env, 'all');
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const ids = blockIds(all.value);
+      expect(ids).toContain('s1');
+      expect(ids.length).toBeGreaterThan(1);
+      expect(ids.length).toBeLessThan(10_501);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe('Inbox does not flash empty while the index or doc list churns', () => {
+  const blocks = { 'doc-a:t1': { type: 'todo', checked: false } };
+
+  /** Row counts of every emission of the Inbox view. */
+  function recordInbox(env: Env) {
+    const seen: number[] = [];
+    subscriptions.push(
+      env.service.view$('inbox').subscribe(g => seen.push(blockIds(g).length))
+    );
+    return seen;
+  }
+
+  it("keeps a doc's tasks while our write is re-indexed (delete, then insert)", async () => {
+    const env = setup({
+      tasks: [{ blockId: 't1' }, { blockId: 't2' }],
+      blocks,
+    });
+    let indexed!: () => void;
+    env.indexer.waitForDocCompleted.mockReturnValue(
+      new Promise<void>(resolve => (indexed = resolve))
+    );
+    const seen = recordInbox(env);
+    await env.service.setPriority('doc-a:t1', 2);
+    env.index([]); // the doc's blocks are deleted...
+    env.index([{ blockId: 't1', priority: 2 }]); // ...and inserted one by one
+    env.index([{ blockId: 't1', priority: 2 }, { blockId: 't2' }]);
+    indexed();
+    await flush();
+    expect(Math.min(...seen)).toBe(2);
+  });
+
+  it('stops holding the rows after 10 s', async () => {
+    vi.useFakeTimers();
+    const env = setup({
+      tasks: [{ blockId: 't1' }, { blockId: 't2' }],
+      blocks,
+    });
+    env.indexer.waitForDocCompleted.mockReturnValue(new Promise(() => {}));
+    const inbox = viewOf(env, 'inbox');
+    await env.service.setPriority('doc-a:t1', 2);
+    env.index([{ blockId: 't1' }]);
+    expect(blockIds(inbox.value)).toEqual(['t1', 't2']);
+    vi.advanceTimersByTime(11_000);
+    env.index([{ blockId: 't1' }]); // t2 really was deleted
+    expect(blockIds(inbox.value)).toEqual(['t1']);
+  });
+
+  it('keeps tasks when the doc streams briefly report no docs', () => {
+    const env = setup({ tasks: [{ blockId: 't1' }, { blockId: 't2' }] });
+    const seen = recordInbox(env);
+    const docs = env.docs$.value;
+    env.docs$.next([]); // opening / releasing the doc for a write
+    env.docs$.next(docs);
+    expect(Math.min(...seen)).toBe(2);
+  });
+});
+
+describe('triage', () => {
   const blocks = {
     'doc-a:t1': { type: 'todo', checked: false },
     'doc-a:t2': {
@@ -893,16 +768,9 @@ describe('TasksService triage', () => {
       priority: 2,
     },
   };
+  const t2: TaskSpec = { blockId: 't2', due: '2026-10-30', priority: 2 };
 
-  it('setDue writes the due date to the source doc and releases it', async () => {
-    const env = setup({ tasks: [{ blockId: 't1' }], blocks });
-    await env.service.setDue('doc-a:t1', '2026-10-29');
-    expect(env.props('doc-a:t1')?.due).toBe('2026-10-29');
-    expect(env.opened).toEqual(['doc-a']);
-    expect(env.released).toEqual(['doc-a']);
-  });
-
-  it('moves a task out of Inbox and updates counts straight away', async () => {
+  it('a date moves the task out of Inbox and updates counts at once', async () => {
     const env = setup({ tasks: [{ blockId: 't1' }], blocks });
     const inbox = viewOf(env, 'inbox');
     const tomorrow = viewOf(env, 'tomorrow');
@@ -913,157 +781,144 @@ describe('TasksService triage', () => {
     // before the write finished and before the index caught up
     expect(inbox.value).toEqual([]);
     expect(shape(tomorrow.value)).toEqual([['day', '2026-10-29', ['t1']]]);
-    expect(counts.value.inbox).toBe(0);
-    expect(counts.value.tomorrow).toBe(1);
+    expect(counts.value).toMatchObject({ inbox: 0, tomorrow: 1 });
     await pending;
+    expect(env.props('doc-a:t1')?.due).toBe('2026-10-29');
+    expect(env.released).toEqual(['doc-a']);
   });
 
-  it('a priority alone also leaves Inbox', async () => {
-    const env = setup({ tasks: [{ blockId: 't1' }], blocks });
-    const inbox = viewOf(env, 'inbox');
-    const all = viewOf(env, 'all');
-    await env.service.setPriority('doc-a:t1', 3);
-    expect(inbox.value).toEqual([]);
-    expect(shape(all.value)).toEqual([['no-date', '', ['t1']]]);
-    expect(env.props('doc-a:t1')?.priority).toBe(3);
-  });
-
-  it('clearing the due date removes the prop from the block', async () => {
+  it('a priority alone keeps the task in Inbox, on top', async () => {
     const env = setup({
-      tasks: [{ blockId: 't2', due: '2026-10-30', priority: 2 }],
-      blocks,
-    });
-    await env.service.setDue('doc-a:t2', null);
-    expect('due' in (env.props('doc-a:t2') ?? {})).toBe(false);
-    expect(env.props('doc-a:t2')?.priority).toBe(2);
-  });
-
-  it('clearing the priority removes the prop from the block', async () => {
-    const env = setup({
-      tasks: [{ blockId: 't2', due: '2026-10-30', priority: 2 }],
-      blocks,
-    });
-    await env.service.setPriority('doc-a:t2', null);
-    expect('priority' in (env.props('doc-a:t2') ?? {})).toBe(false);
-    expect(env.props('doc-a:t2')?.due).toBe('2026-10-30');
-
-    await env.service.setPriority('doc-a:t2', 0);
-    expect('priority' in (env.props('doc-a:t2') ?? {})).toBe(false);
-  });
-
-  it('shows a cleared date in the views at once', async () => {
-    const env = setup({
-      tasks: [{ blockId: 't2', due: '2026-10-30' }],
-      blocks,
+      tasks: [{ blockId: 't1' }, { blockId: 't3' }],
+      blocks: { ...blocks, 'doc-a:t3': { type: 'todo', checked: false } },
     });
     const inbox = viewOf(env, 'inbox');
-    expect(inbox.value).toEqual([]);
-    await env.service.setDue('doc-a:t2', null);
-    expect(shape(inbox.value)).toEqual([['doc', 'doc-a', ['t2']]]);
+    await env.service.setPriority('doc-a:t3', 3);
+    expect(shape(inbox.value)).toEqual([['doc', 'doc-a', ['t3', 't1']]]);
+    expect(env.props('doc-a:t3')?.priority).toBe(3);
   });
 
-  it('drops the overlay once the index reflects the change', async () => {
-    const env = setup({ tasks: [{ blockId: 't1' }], blocks });
-    const tomorrow = viewOf(env, 'tomorrow');
-    await env.service.setDue('doc-a:t1', '2026-10-29');
-
-    // the index catches up
-    env.rows$.next({
-      nodes: [node({ blockId: 't1', due: '2026-10-29' })],
-    });
-    await flush();
-    expect(shape(tomorrow.value)).toEqual([['day', '2026-10-29', ['t1']]]);
-
-    // another device moves it: the stale optimistic value must not win
-    env.rows$.next({
-      nodes: [node({ blockId: 't1', due: '2026-11-01' })],
-    });
-    expect(tomorrow.value).toEqual([]);
-    expect(shape(viewOf(env, 'next7').value)).toEqual([
-      ['day', '2026-11-01', ['t1']],
-    ]);
-  });
-
-  it('drops the overlay after a timeout if the index never catches up', async () => {
-    vi.useFakeTimers();
-    const env = setup({ tasks: [{ blockId: 't1' }], blocks });
+  it.each([
+    ['setDue null', (s: TasksService) => s.setDue('doc-a:t2', null), 'due'],
+    [
+      'setPriority null',
+      (s: TasksService) => s.setPriority('doc-a:t2', null),
+      'priority',
+    ],
+    [
+      'setPriority 0',
+      (s: TasksService) => s.setPriority('doc-a:t2', 0),
+      'priority',
+    ],
+  ])('%s removes the prop and shows it at once', async (_n, write, gone) => {
+    const env = setup({ tasks: [t2], blocks });
     const inbox = viewOf(env, 'inbox');
-    await env.service.setDue('doc-a:t1', '2026-10-29');
-    expect(inbox.value).toEqual([]);
-    vi.advanceTimersByTime(61_000);
-    expect(shape(inbox.value)).toEqual([['doc', 'doc-a', ['t1']]]);
+    await write(env.service);
+    expect(gone in (env.props('doc-a:t2') ?? {})).toBe(false);
+    const kept = gone === 'due' ? 'priority' : 'due';
+    expect(kept in (env.props('doc-a:t2') ?? {})).toBe(true);
+    // a cleared date is back in Inbox; a cleared priority still has its date
+    expect(blockIds(inbox.value)).toEqual(gone === 'due' ? ['t2'] : []);
   });
 
-  it('keeps the change on screen while a slow index catches up', async () => {
-    vi.useFakeTimers();
+  it.each<[string, (env: Env) => Promise<unknown>]>([
+    [
+      'a trashed doc',
+      env => {
+        env.trashAll(true);
+        return env.service.setDue('doc-a:t1', '2026-10-29');
+      },
+    ],
+    [
+      'toggling in a trashed doc',
+      env => {
+        env.trashAll(true);
+        return env.service.toggle('doc-a:t1');
+      },
+    ],
+    [
+      'a doc without a record',
+      env => {
+        env.deleteDocs();
+        return env.service.setPriority('doc-a:t1', 3);
+      },
+    ],
+    ['a malformed date', env => env.service.setDue('doc-a:t1', 'tomorrow')],
+  ])('rejects without touching the doc: %s', async (_name, run) => {
     const env = setup({ tasks: [{ blockId: 't1' }], blocks });
-    const inbox = viewOf(env, 'inbox');
-    const tomorrow = viewOf(env, 'tomorrow');
-    await env.service.setDue('doc-a:t1', '2026-10-29');
-
-    vi.advanceTimersByTime(30_000);
-    expect(inbox.value).toEqual([]);
-    expect(shape(tomorrow.value)).toEqual([['day', '2026-10-29', ['t1']]]);
-
-    env.index([{ blockId: 't1', due: '2026-10-29' }]);
-    await flush();
-    expect(shape(tomorrow.value)).toEqual([['day', '2026-10-29', ['t1']]]);
-  });
-
-  it('rejects, and shows nothing, for a task in a trashed doc', async () => {
-    const env = setup({ tasks: [{ blockId: 't1' }], blocks });
-    const inbox = viewOf(env, 'inbox');
-    env.docs$.next(env.docs$.value.map(d => ({ ...d, trash: true })));
-    await expect(env.service.setDue('doc-a:t1', '2026-10-29')).rejects.toThrow(
-      /trashed or missing/
-    );
-    await expect(env.service.toggle('doc-a:t1')).rejects.toThrow();
+    await expect(run(env)).rejects.toThrow();
     expect(env.opened).toEqual([]);
     expect(env.props('doc-a:t1')).toEqual({ type: 'todo', checked: false });
-    expect(inbox.value).toEqual([]);
   });
 
-  it('rejects for a doc that no longer exists', async () => {
-    const env = setup({ tasks: [{ blockId: 't1' }], blocks });
-    env.docs$.next([]);
-    await expect(env.service.setPriority('doc-a:t1', 3)).rejects.toThrow();
-    expect(env.opened).toEqual([]);
-  });
-
-  it('a failed write drops only its own patch keys', async () => {
-    const env = setup({
-      tasks: [{ blockId: 't1' }],
-      blocks: { 'doc-a:t1': { type: 'todo', checked: false } },
-    });
-    const all = viewOf(env, 'all');
-    await env.service.setPriority('doc-a:t1', 3);
-    // the doc is trashed before the second write runs
-    env.docs$.next(env.docs$.value.map(d => ({ ...d, trash: true })));
-    await expect(
-      env.service.setDue('doc-a:t1', '2026-10-29')
-    ).rejects.toThrow();
-    env.docs$.next(env.docs$.value.map(d => ({ ...d, trash: false })));
-    expect(shape(all.value)).toEqual([['no-date', '', ['t1']]]);
-  });
-
-  it('reverts the optimistic change when the write fails', async () => {
+  it('takes the optimistic change back when the write fails', async () => {
     const env = setup({ tasks: [{ blockId: 'missing' }], blocks });
     const inbox = viewOf(env, 'inbox');
     await expect(
       env.service.setDue('doc-a:missing', '2026-10-29')
     ).rejects.toThrow();
-    expect(shape(inbox.value)).toEqual([['doc', 'doc-a', ['missing']]]);
+    expect(blockIds(inbox.value)).toEqual(['missing']);
     expect(env.released).toEqual(['doc-a']);
   });
 
-  it('rejects a malformed due date without touching the doc', async () => {
-    const env = setup({ tasks: [{ blockId: 't1' }], blocks });
-    await expect(env.service.setDue('doc-a:t1', 'tomorrow')).rejects.toThrow();
-    expect(env.opened).toEqual([]);
+  describe('optimistic overlay', () => {
+    it('holds the change until the doc is indexed, then yields to the index', async () => {
+      const env = setup({ tasks: [{ blockId: 't1' }], blocks });
+      let indexed!: () => void;
+      env.indexer.waitForDocCompleted.mockReturnValue(
+        new Promise<void>(resolve => (indexed = resolve))
+      );
+      const tomorrow = viewOf(env, 'tomorrow');
+      await env.service.setDue('doc-a:t1', '2026-10-29');
+
+      env.index([{ blockId: 't1' }]); // a stale emission while indexing
+      await flush();
+      expect(blockIds(tomorrow.value)).toEqual(['t1']);
+
+      indexed();
+      await flush();
+      expect(blockIds(tomorrow.value)).toEqual(['t1']); // waits for an emission
+
+      // another device moves it: the optimistic value must not win
+      env.index([{ blockId: 't1', due: '2026-11-01' }]);
+      await flush();
+      expect(tomorrow.value).toEqual([]);
+      expect(blockIds(viewOf(env, 'next7').value)).toEqual(['t1']);
+    });
+
+    it('stops waiting for an indexer that never completes the doc', async () => {
+      vi.useFakeTimers();
+      const env = setup({ tasks: [{ blockId: 't1' }], blocks });
+      env.indexer.waitForDocCompleted.mockReturnValue(new Promise(() => {}));
+      const inbox = viewOf(env, 'inbox');
+      await env.service.setDue('doc-a:t1', '2026-10-29');
+      expect(inbox.value).toEqual([]);
+      vi.advanceTimersByTime(11_000);
+      await flush();
+      env.index([{ blockId: 't1' }]);
+      await flush();
+      expect(blockIds(inbox.value)).toEqual(['t1']);
+    });
+
+    it('a failed write keeps an earlier write and still settles', async () => {
+      const env = setup({ tasks: [{ blockId: 't1' }], blocks });
+      const inbox = viewOf(env, 'inbox');
+      await env.service.setPriority('doc-a:t1', 3);
+      await flush();
+      const failing = env.service.setDue('doc-a:t1', '2026-10-29');
+      env.trashAll(true); // the write runs after this
+      await expect(failing).rejects.toThrow();
+      env.trashAll(false);
+      expect(inbox.value[0].rows[0]).toMatchObject({ priority: 3, due: null });
+
+      env.index([{ blockId: 't1' }]); // the entry settled: this drops it
+      await flush();
+      expect(inbox.value[0].rows[0].priority).toBe(0);
+    });
   });
 });
 
-describe('TasksService undo', () => {
+describe('undo', () => {
   const blocks = {
     'doc-a:t1': { type: 'todo', checked: false },
     'doc-a:t2': {
@@ -1073,273 +928,108 @@ describe('TasksService undo', () => {
       priority: 2,
     },
   };
+  const t2: TaskSpec = { blockId: 't2', due: '2026-10-30', priority: 2 };
 
-  it('restores an empty date and puts the task back in Inbox', async () => {
+  it.each<[string, string, string, 'due' | 'priority', unknown]>([
+    ['an empty date', 't1', 'due:2026-10-29', 'due', undefined],
+    ['the previous date', 't2', 'due:2026-11-02', 'due', '2026-10-30'],
+    ['the previous priority', 't2', 'priority:3', 'priority', 2],
+    ['a cleared date', 't2', 'due:null', 'due', '2026-10-30'],
+  ])('restores %s', async (_name, block, change, key, expected) => {
+    const env = setup({ tasks: [{ blockId: 't1' }, t2], blocks });
+    const all = viewOf(env, 'all');
+    const id = `doc-a:${block}`;
+    const [prop, value] = change.split(':');
+    const undo =
+      prop === 'due'
+        ? await env.service.setDue(id, value === 'null' ? null : value)
+        : await env.service.setPriority(id, Number(value) as 3);
+    await undo();
+    expect(env.props(id)?.[key]).toBe(expected);
+    expect(blockIds(all.value)).toContain(block);
+  });
+
+  it('rejects when the doc is trashed and works again once restored', async () => {
     const env = setup({ tasks: [{ blockId: 't1' }], blocks });
-    const inbox = viewOf(env, 'inbox');
-    const token = await env.service.setDue('doc-a:t1', '2026-10-29');
-    expect(inbox.value).toEqual([]);
-
-    await expect(env.service.undo(token)).resolves.toBe(true);
+    const undo = await env.service.setDue('doc-a:t1', '2026-10-29');
+    env.trashAll(true);
+    await expect(undo()).rejects.toThrow();
+    env.trashAll(false);
+    await undo();
     expect('due' in (env.props('doc-a:t1') ?? {})).toBe(false);
-    expect(shape(inbox.value)).toEqual([['doc', 'doc-a', ['t1']]]);
   });
 
-  it('restores the previous date and priority', async () => {
+  it('undoes a completion and an un-ticking, keeping the completion time', async () => {
+    const doneAt = at(2026, 10, 28, 9);
     const env = setup({
-      tasks: [{ blockId: 't2', due: '2026-10-30', priority: 2 }],
-      blocks,
-    });
-    await env.service.undo(await env.service.setDue('doc-a:t2', '2026-11-02'));
-    expect(env.props('doc-a:t2')?.due).toBe('2026-10-30');
-
-    await env.service.undo(await env.service.setPriority('doc-a:t2', 3));
-    expect(env.props('doc-a:t2')?.priority).toBe(2);
-  });
-
-  it('restores a cleared date', async () => {
-    const env = setup({
-      tasks: [{ blockId: 't2', due: '2026-10-30' }],
-      blocks,
-    });
-    await env.service.undo(await env.service.setDue('doc-a:t2', null));
-    expect(env.props('doc-a:t2')?.due).toBe('2026-10-30');
-  });
-
-  it('undoes only the latest change, and only once', async () => {
-    const env = setup({ tasks: [{ blockId: 't1' }], blocks });
-    const first = await env.service.setDue('doc-a:t1', '2026-10-29');
-    const second = await env.service.setPriority('doc-a:t1', 3);
-
-    // a stale toast can't revert anything
-    await expect(env.service.undo(first)).resolves.toBe(false);
-    expect(env.props('doc-a:t1')).toMatchObject({
-      due: '2026-10-29',
-      priority: 3,
-    });
-
-    await expect(env.service.undo(second)).resolves.toBe(true);
-    expect(env.props('doc-a:t1')?.due).toBe('2026-10-29');
-    expect('priority' in (env.props('doc-a:t1') ?? {})).toBe(false);
-    await expect(env.service.undo(second)).resolves.toBe(false);
-  });
-
-  it('ignores a token from another task', async () => {
-    const env = setup({
-      tasks: [{ blockId: 't1' }, { blockId: 't2', due: '2026-10-30' }],
-      blocks,
-    });
-    const first = await env.service.setDue('doc-a:t1', '2026-10-29');
-    await env.service.setDue('doc-a:t2', '2026-11-05');
-    await expect(env.service.undo(first)).resolves.toBe(false);
-    expect(env.props('doc-a:t2')?.due).toBe('2026-11-05');
-  });
-
-  it('restores the earlier values even over an edit made in between', async () => {
-    const env = setup({
-      tasks: [{ blockId: 't2', due: '2026-10-30' }],
-      blocks,
-    });
-    const token = await env.service.setDue('doc-a:t2', '2026-11-02');
-    // edited in the doc meanwhile
-    const props = env.props('doc-a:t2');
-    if (props) props.due = '2026-12-24';
-    await env.service.undo(token);
-    expect(env.props('doc-a:t2')?.due).toBe('2026-10-30');
-  });
-
-  it('keeps the token valid when the undo write fails', async () => {
-    const env = setup({ tasks: [{ blockId: 't1' }], blocks });
-    const token = await env.service.setDue('doc-a:t1', '2026-10-29');
-    env.docs$.next(env.docs$.value.map(d => ({ ...d, trash: true })));
-    await expect(env.service.undo(token)).rejects.toThrow();
-    env.docs$.next(env.docs$.value.map(d => ({ ...d, trash: false })));
-    await expect(env.service.undo(token)).resolves.toBe(true);
-  });
-
-  it('undoes a completion', async () => {
-    const env = setup({ tasks: [{ blockId: 't1' }], blocks });
-    const inbox = viewOf(env, 'inbox');
-    const counts = watch(env.service.counts$);
-    const token = await env.service.toggle('doc-a:t1');
-    expect(counts.value.inbox).toBe(0);
-    await env.service.undo(token);
-    expect(env.props('doc-a:t1')?.checked).toBe(false);
-    expect('completedAt' in (env.props('doc-a:t1') ?? {})).toBe(false);
-    expect(inbox.value[0].rows[0].checked).toBe(false);
-    expect(counts.value.inbox).toBe(1);
-  });
-
-  it('does not flash the ticked state when undo beats a slow index', async () => {
-    const env = setup({ tasks: [{ blockId: 't1' }], blocks });
-    const inbox = viewOf(env, 'inbox');
-    const seen: boolean[] = [];
-    subscriptions.push(
-      env.service
-        .view$('inbox')
-        .subscribe(groups =>
-          seen.push(...groups.flatMap(g => g.rows.map(r => r.checked)))
-        )
-    );
-
-    const token = await env.service.toggle('doc-a:t1');
-    await env.service.undo(token);
-    await flush();
-    seen.length = 0;
-
-    // an idle tick with the stale (unticked) row must not end the overlay
-    env.idle();
-    await flush();
-    // the index then delivers the delayed tick
-    env.index([{ blockId: 't1', checked: true, completedAt: NOON }]);
-    await flush();
-    expect(seen).not.toContain(true);
-    expect(inbox.value[0].rows[0].checked).toBe(false);
-
-    // the index catches up with the undo; after an idle tick the overlay is
-    // gone, so a change from another device shows
-    env.busy();
-    env.index([{ blockId: 't1' }]);
-    env.idle();
-    await flush();
-    env.index([{ blockId: 't1', checked: true, completedAt: NOON }]);
-    await flush();
-    expect(inbox.value[0].rows[0].checked).toBe(true);
-  });
-
-  it('undoes un-ticking, restoring the original completion time', async () => {
-    const done = at(2026, 10, 27, 15);
-    const env = setup({
-      tasks: [{ blockId: 't1', checked: true, completedAt: done }],
+      tasks: [
+        { blockId: 't1' },
+        { blockId: 't2', checked: true, completedAt: doneAt },
+      ],
       blocks: {
-        'doc-a:t1': { type: 'todo', checked: true, completedAt: done },
+        ...blocks,
+        'doc-a:t2': { type: 'todo', checked: true, completedAt: doneAt },
       },
     });
-    const token = await env.service.toggle('doc-a:t1');
+    const inbox = viewOf(env, 'inbox');
+    const counts = watch(env.service.counts$);
+
+    const undoTick = await env.service.toggle('doc-a:t1');
+    expect(counts.value.inbox).toBe(0);
+    await undoTick();
     expect(env.props('doc-a:t1')?.checked).toBe(false);
-    await env.service.undo(token);
-    expect(env.props('doc-a:t1')).toMatchObject({
+    expect('completedAt' in (env.props('doc-a:t1') ?? {})).toBe(false);
+    expect(inbox.value[0].rows.map(r => r.checked)).toEqual([false, true]);
+
+    const undoUntick = await env.service.toggle('doc-a:t2');
+    expect(env.props('doc-a:t2')?.checked).toBe(false);
+    await undoUntick();
+    expect(env.props('doc-a:t2')).toMatchObject({
       checked: true,
-      completedAt: done,
+      completedAt: doneAt,
     });
   });
 });
 
-describe('TasksService toggle', () => {
-  it('ticks the source block and stamps the completion time', async () => {
+describe('toggle', () => {
+  it('ticks and unticks the block, crossing the row off at once', async () => {
+    const due = '2026-10-28';
     const env = setup({
-      tasks: [{ blockId: 't1' }],
-      blocks: { 'doc-a:t1': { type: 'todo', checked: false } },
+      tasks: [
+        { blockId: 't1', due },
+        { blockId: 't2', due, checked: true, completedAt: NOON },
+      ],
+      blocks: {
+        'doc-a:t1': { type: 'todo', checked: false, due },
+        'doc-a:t2': { type: 'todo', checked: true, completedAt: NOON },
+      },
     });
-    watch(env.service.counts$);
-    await env.service.toggle('doc-a:t1');
+    const completed = viewOf(env, 'completed');
+    const counts = watch(env.service.counts$);
+    expect(counts.value).toMatchObject({ today: 1, completed: 1 });
+
+    const pending = env.service.toggle('doc-a:t1');
+    expect(counts.value).toMatchObject({ today: 0, completed: 2 });
+    expect(blockIds(completed.value).sort()).toEqual(['t1', 't2']);
+    await pending;
     expect(env.props('doc-a:t1')).toMatchObject({
       checked: true,
       completedAt: NOON,
     });
     expect(env.released).toEqual(['doc-a']);
-  });
 
-  it('unticking removes completedAt from the block', async () => {
-    const env = setup({
-      tasks: [{ blockId: 't1', checked: true, completedAt: NOON }],
-      blocks: {
-        'doc-a:t1': { type: 'todo', checked: true, completedAt: NOON },
-      },
-    });
-    watch(env.service.counts$);
-    await env.service.toggle('doc-a:t1');
-    expect(env.props('doc-a:t1')?.checked).toBe(false);
-    expect('completedAt' in (env.props('doc-a:t1') ?? {})).toBe(false);
-  });
-
-  it('crosses the row off in place and drops the counts at once', async () => {
-    const env = setup({
-      tasks: [
-        { blockId: 't1', due: '2026-10-28' },
-        { blockId: 't2', due: '2026-10-28' },
-      ],
-      blocks: {
-        'doc-a:t1': { type: 'todo', checked: false, due: '2026-10-28' },
-      },
-    });
-    const today = viewOf(env, 'today');
-    const completed = viewOf(env, 'completed');
-    const counts = watch(env.service.counts$);
-    expect(counts.value.today).toBe(2);
-
-    const pending = env.service.toggle('doc-a:t1');
-    expect(counts.value.today).toBe(1);
-    expect(counts.value.completed).toBe(1);
-    expect(shape(today.value)).toEqual([['day', '2026-10-28', ['t2', 't1']]]);
-    expect(today.value[0].rows[1]).toMatchObject({
-      checked: true,
-      completedAt: NOON,
-    });
-    expect(shape(completed.value)).toEqual([
-      ['completed-day', '2026-10-28', ['t1']],
-    ]);
-    await pending;
-  });
-
-  it('reopens a completed task in its normal view', async () => {
-    const env = setup({
-      tasks: [
-        { blockId: 't1', due: '2026-10-28', checked: true, completedAt: NOON },
-      ],
-      blocks: {
-        'doc-a:t1': {
-          type: 'todo',
-          checked: true,
-          due: '2026-10-28',
-          completedAt: NOON,
-        },
-      },
-    });
-    const today = viewOf(env, 'today');
-    const counts = watch(env.service.counts$);
-    expect(counts.value.today).toBe(0);
-    await env.service.toggle('doc-a:t1');
-    expect(counts.value.today).toBe(1);
-    expect(today.value[0].rows[0].checked).toBe(false);
-  });
-
-  it('ticks a task whose row is not in the index yet', async () => {
-    const env = setup({
-      blocks: { 'doc-a:fresh': { type: 'todo', checked: false } },
-    });
-    await env.service.toggle('doc-a:fresh');
-    expect(env.props('doc-a:fresh')?.checked).toBe(true);
+    await env.service.toggle('doc-a:t2');
+    expect(env.props('doc-a:t2')?.checked).toBe(false);
+    expect('completedAt' in (env.props('doc-a:t2') ?? {})).toBe(false);
   });
 });
 
-describe('TasksService state', () => {
+describe('state', () => {
   it('is loading until the first result and a finished index pass', () => {
     const env = setup({ indexerState: { completed: false, indexing: 3 } });
     const state = watch(env.service.state$);
     expect(state.value).toEqual({ status: 'loading' });
     env.indexerState$.next({ ...env.indexerState$.value, completed: true });
-    expect(state.value).toEqual({ status: 'ready' });
-  });
-
-  it('stays loading while no query result has arrived', () => {
-    const env = setup();
-    const result = new Subject<never>();
-    env.indexer.search$.mockReturnValue(result as never);
-    env.service.retry();
-    const state = watch(env.service.state$);
-    expect(state.value).toEqual({ status: 'loading' });
-  });
-
-  it('stays ready when the indexer picks up a single edit afterwards', () => {
-    const env = setup();
-    const state = watch(env.service.state$);
-    expect(state.value).toEqual({ status: 'ready' });
-    env.indexerState$.next({
-      ...env.indexerState$.value,
-      completed: false,
-      indexing: 1,
-    });
     expect(state.value).toEqual({ status: 'ready' });
   });
 
@@ -1369,78 +1059,6 @@ describe('TasksService state', () => {
     env.rows$.next({ nodes: [node({ blockId: 't1' })] });
     env.service.retry();
     expect(state.value).toEqual({ status: 'ready' });
-    expect(shape(inbox.value)).toEqual([['doc', 'doc-a', ['t1']]]);
-  });
-});
-
-describe('TasksService inbox badge', () => {
-  it('inboxCount$ follows triage and the index', async () => {
-    const env = setup({
-      tasks: [
-        { blockId: 't1' },
-        { blockId: 't2' },
-        { blockId: 't3', due: '2026-10-30' },
-      ],
-      blocks: {
-        'doc-a:t1': { type: 'todo', checked: false },
-        'doc-a:t2': { type: 'todo', checked: false },
-      },
-    });
-    const badge = watch(env.service.inboxCount$);
-    expect(badge.value).toBe(2);
-    await env.service.setPriority('doc-a:t1', 2);
-    expect(badge.value).toBe(1);
-    env.index([{ blockId: 't1', priority: 2 }]);
-    await flush();
-    expect(badge.value).toBe(0);
-  });
-});
-
-describe('TasksService typing in a doc', () => {
-  it('does not change the views when only updated dates move', () => {
-    const env = setup({
-      tasks: [{ blockId: 't1' }, { blockId: 't2', due: '2026-10-28' }],
-    });
-    const emissions: unknown[] = [];
-    for (const id of ['inbox', 'today', 'all'] as const) {
-      subscriptions.push(
-        env.service.view$(id).subscribe(groups => emissions.push(groups))
-      );
-    }
-    subscriptions.push(
-      env.service.counts$.subscribe(counts => emissions.push(counts))
-    );
-    const before = emissions.length;
-    for (let i = 1; i <= 3; i++) {
-      env.docs$.next(
-        env.docs$.value.map(d => ({ ...d, updatedDate: NOON + i * 1000 }))
-      );
-    }
-    expect(emissions.length).toBe(before);
-  });
-
-  it('still follows the updated date for a checked task without completedAt', () => {
-    const env = setup({
-      tasks: [{ blockId: 't1', checked: true }],
-      docs: [{ id: 'doc-a', updatedDate: at(2026, 10, 28, 8) }],
-    });
-    const inbox = viewOf(env, 'inbox');
-    expect(inbox.value[0].rows[0].completedAt).toBe(at(2026, 10, 28, 8));
-    env.docs$.next([{ id: 'doc-a', updatedDate: at(2026, 10, 28, 9) }]);
-    expect(inbox.value[0].rows[0].completedAt).toBe(at(2026, 10, 28, 9));
-  });
-});
-
-describe('TasksService wake-up', () => {
-  it('re-reads the day when the page becomes visible again', () => {
-    let now = at(2026, 10, 28, 23, 0);
-    const env = setup({ tasks: [{ blockId: 't', due: '2026-10-28' }] });
-    env.clock.now.mockImplementation(() => now);
-    const today = viewOf(env, 'today');
-    expect(shape(today.value)).toEqual([['day', '2026-10-28', ['t']]]);
-
-    now = at(2026, 10, 29, 7, 0); // the machine slept through midnight
-    document.dispatchEvent(new Event('visibilitychange'));
-    expect(shape(today.value)).toEqual([['overdue', '', ['t']]]);
+    expect(blockIds(inbox.value)).toEqual(['t1']);
   });
 });

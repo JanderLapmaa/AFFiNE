@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { datePresets, leavesInbox, nextMonday, rowShortcut } from './triage';
+import { datePresets, nextMonday, rowShortcut } from './triage';
 
 describe('nextMonday', () => {
   test('is strictly after today', () => {
@@ -20,19 +20,6 @@ describe('datePresets', () => {
       '2026-11-02',
       '2026-11-05',
     ]);
-  });
-});
-
-describe('leavesInbox', () => {
-  const inbox = { due: null, priority: 0, checked: false } as const;
-  test('only inbox tasks that get a date or priority', () => {
-    expect(leavesInbox(inbox, { due: '2026-10-30' })).toBe(true);
-    expect(leavesInbox(inbox, { priority: 3 })).toBe(true);
-    expect(leavesInbox(inbox, { due: null })).toBe(false);
-    expect(leavesInbox(inbox, { priority: 0 })).toBe(false);
-    expect(leavesInbox({ ...inbox, priority: 1 }, { due: '2026-10-30' })).toBe(
-      false
-    );
   });
 });
 
