@@ -1363,3 +1363,98 @@ test('store opens serialize A to B to A, propagate failures and drain before clo
     }
   }
 });
+
+// Mirrors the native indexer: searches are capped to a 10000 hit window and
+// report `hasMore` when truncated, aggregate buckets are not capped.
+class WindowedIndexerStorage extends TrackingIndexerStorage {
+  constructor(
+    calls: string[],
+    private readonly docIds: string[]
+  ) {
+    super(calls, 30_000);
+  }
+
+  override async search<
+    T extends keyof IndexerSchema,
+    const O extends SearchOptions<T>,
+  >(table: T, _query: Query<T>, options?: O): Promise<SearchResult<T, O>> {
+    const skip = options?.pagination?.skip ?? 0;
+    const limit = Math.min(options?.pagination?.limit ?? 10, 10_000 - skip);
+    const ids = table === 'doc' ? this.docIds : [];
+    return {
+      pagination: {
+        count: ids.length,
+        limit,
+        skip,
+        hasMore: ids.length > skip + limit,
+      },
+      nodes: ids.slice(skip, skip + limit).map(id => ({
+        id,
+        score: 1,
+        fields: { docId: id, title: id },
+      })),
+    } as unknown as SearchResult<T, O>;
+  }
+
+  override async aggregate<
+    T extends keyof IndexerSchema,
+    const O extends AggregateOptions<T>,
+  >(
+    table: T,
+    _query: Query<T>,
+    _field: keyof IndexerSchema[T],
+    _options?: O
+  ): Promise<AggregateResult<T, O>> {
+    const ids = table === 'doc' ? this.docIds : [];
+    return {
+      pagination: {
+        count: ids.length,
+        limit: ids.length,
+        skip: 0,
+        hasMore: false,
+      },
+      buckets: ids.map(id => ({
+        key: id,
+        score: 1,
+        count: 1,
+        hits: {
+          pagination: { count: 1, limit: 1, skip: 0, hasMore: false },
+          nodes: [{ id, score: 1, fields: { docId: id, title: id } }],
+        },
+      })),
+    } as unknown as AggregateResult<T, O>;
+  }
+}
+
+test('indexer reads every indexed doc past the native search window', async () => {
+  const calls: string[] = [];
+  const staleDocIds = Array.from({ length: 10_050 }, (_, i) => `stale-${i}`);
+  const docStorage = new TestDocStorage(
+    'workspace-id',
+    new Map([['doc1', new Date('2026-01-01T00:00:00.000Z')]]),
+    async () => ({ title: 'doc1', summary: 's', blocks: [] })
+  );
+  const sync = new IndexerSyncImpl(
+    docStorage,
+    {
+      local: new WindowedIndexerStorage(calls, ['doc1', ...staleDocIds]),
+      remotes: {},
+    },
+    new TrackingIndexerSyncStorage(calls)
+  );
+  vi.spyOn(reader, 'readAllDocsFromRootDoc').mockImplementation(
+    () => new Map([['doc1', { title: 'doc1' }]])
+  );
+
+  try {
+    sync.start();
+    await sync.waitForCompleted();
+
+    // docs beyond the window are still seen, so the stale ones get cleaned up
+    const deleted = calls.filter(call => call.startsWith('delete:doc:'));
+    expect(deleted).toHaveLength(staleDocIds.length);
+    expect(deleted).toContain('delete:doc:stale-10049');
+  } finally {
+    await sync.stop();
+  }
+}, 60_000);

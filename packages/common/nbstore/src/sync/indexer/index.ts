@@ -585,32 +585,41 @@ export class IndexerSyncImpl implements IndexerSync {
   }
 
   private async getAllDocsFromIndexer() {
-    const docs = await this.indexer.search(
+    const fields = ['docId', 'title', 'summary'] as const;
+    const search = await this.indexer.search(
       'doc',
+      { type: 'all' },
+      { pagination: { limit: Infinity }, fields: [...fields] }
+    );
+    const docs = new Map<
+      string,
+      { title: string | undefined; summary?: string }
+    >();
+    const add = (id: string, f: Record<string, unknown>) =>
+      docs.set(id, {
+        title: typeof f.title === 'string' ? f.title : undefined,
+        summary: typeof f.summary === 'string' ? f.summary : undefined,
+      });
+    for (const node of search.nodes) add(node.id, node.fields);
+    if (!search.pagination.hasMore) return docs;
+
+    // The native indexer caps a search window at 10000 hits and offsets can't
+    // pass it either, but aggregate buckets are uncapped: one bucket per doc.
+    docs.clear();
+    const { buckets } = await this.indexer.aggregate(
+      'doc',
+      { type: 'all' },
+      'docId',
       {
-        type: 'all',
-      },
-      {
-        pagination: {
-          limit: Infinity,
-        },
-        fields: ['docId', 'title', 'summary'],
+        pagination: { limit: Infinity },
+        hits: { pagination: { limit: 1 }, fields: [...fields] },
       }
     );
-
-    return new Map(
-      docs.nodes.map(node => {
-        const title = node.fields.title;
-        const summary = node.fields.summary;
-        return [
-          node.id,
-          {
-            title: typeof title === 'string' ? title : undefined,
-            summary: typeof summary === 'string' ? summary : undefined,
-          },
-        ];
-      })
-    );
+    for (const bucket of buckets) {
+      const node = bucket.hits.nodes[0];
+      if (node) add(node.id, node.fields);
+    }
+    return docs;
   }
 
   async search<T extends keyof IndexerSchema, const O extends SearchOptions<T>>(

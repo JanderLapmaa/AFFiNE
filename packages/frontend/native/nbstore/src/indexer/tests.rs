@@ -705,3 +705,63 @@ fn heading_trim_matches_js_whitespace() {
   assert_eq!(fields["t-nel"]["heading"], "\u{85}");
   assert_eq!(fields["t-mixed"]["heading"], "Mixed\u{85}");
 }
+
+#[tokio::test]
+async fn doc_table_is_fully_readable_beyond_the_search_window() {
+  // memory-indexer caps a search window at 10000 hits; aggregate buckets are
+  // uncapped, which is how the JS sync reads every indexed doc.
+  const DOCS: usize = 10_050;
+  let db_path = temp_workspace_dir().join("storage.db");
+  let storage = init_db(&db_path).await;
+  for i in 0..DOCS {
+    let id = format!("doc-{i}");
+    storage
+      .index_upsert(
+        "doc",
+        document(
+          &id,
+          &[
+            ("docId", &[id.as_str()]),
+            ("title", &["title"]),
+            ("summary", &["summary"]),
+          ],
+        ),
+      )
+      .await
+      .unwrap();
+  }
+
+  let mut window = options(&["docId"], &[]);
+  window.limit = 10_001;
+  assert!(
+    storage
+      .index_search("doc", query("all", None, None), window)
+      .await
+      .is_err()
+  );
+
+  let mut window = options(&["docId"], &[]);
+  window.limit = 10_000;
+  let search = storage
+    .index_search("doc", query("all", None, None), window)
+    .await
+    .unwrap();
+  assert_eq!(search.total as usize, DOCS);
+  assert_eq!(search.hits.len(), 10_000);
+
+  let mut hits = options(&["docId", "title", "summary"], &[]);
+  hits.limit = 1;
+  let aggregate = storage
+    .index_aggregate("doc", query("all", None, None), "docId", u32::MAX, 0, Some(hits))
+    .await
+    .unwrap();
+  assert_eq!(aggregate.buckets.len(), DOCS);
+  assert!(aggregate.buckets.iter().all(|bucket| bucket.hits.len() == 1));
+  let mut keys: Vec<_> = aggregate.buckets.iter().map(|bucket| bucket.key.clone()).collect();
+  keys.sort();
+  keys.dedup();
+  assert_eq!(keys.len(), DOCS);
+
+  storage.close().await;
+  cleanup(&db_path).await;
+}

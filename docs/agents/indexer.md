@@ -90,3 +90,19 @@ can't drift.
 
 Index versions bumped for this: IndexedDB `indexVersion()` 1 → 2 → 3,
 `NBSTORE_INDEXER_VERSION` 7 → 8 → 9 (the second bump added `order`).
+
+## Native search window cap (memory-indexer 0.4.0)
+
+The native indexer rejects any search with `offset + limit > 10000`
+("search window exceeds 10000"); aggregates are not capped. Upstream's bump to
+0.4.0 (#15504) left `getAllDocsFromIndexer` asking for `limit: Infinity`, so
+the desktop/Android indexer failed before indexing anything. The fork fixes it:
+
+- The SQLite adapter clamps `limit: Infinity` to the remaining window
+  (`NATIVE_INDEXER_MAX_WINDOW`), reporting truncation as `hasMore: true`;
+  an `Infinity` limit with `skip >= 10000`, or any explicit window past the
+  cap, throws like native does.
+- `getAllDocsFromIndexer` falls back to an aggregate on `docId` when the
+  search is truncated.
+- Queries that can return more than 10000 rows must page by something other
+  than offset (the Tasks service batches by doc via an aggregate).

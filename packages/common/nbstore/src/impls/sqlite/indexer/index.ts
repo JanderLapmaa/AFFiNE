@@ -25,6 +25,9 @@ import { createNode } from './node-builder';
 
 const SQLITE_INDEXER_VERSION_OFFSET = 1;
 const NATIVE_INDEXER_MAX_LIMIT = 0xffffffff;
+// memory-indexer (MAX_SEARCH_LIMIT) rejects a search whose limit or
+// offset + limit exceeds this. Aggregate buckets have no such cap.
+const NATIVE_INDEXER_MAX_WINDOW = 10_000;
 
 export class SqliteIndexerStorage extends IndexerStorageBase {
   static readonly identifier = 'SqliteIndexerStorage';
@@ -49,10 +52,11 @@ export class SqliteIndexerStorage extends IndexerStorageBase {
   ): Promise<SearchResult<T, O>> {
     const limit = options?.pagination?.limit ?? 10;
     const skip = options?.pagination?.skip ?? 0;
+    const window = toNativeWindow(limit, skip);
     const result = await this.connection.apis.indexSearch(
       String(table),
       toNativeQuery(query),
-      toNativeOptions(options, limit, skip)
+      toNativeOptions(options, window)
     );
     const nodes = result.hits.map(hit => createNode(hit, options ?? {}));
 
@@ -61,7 +65,8 @@ export class SqliteIndexerStorage extends IndexerStorageBase {
         count: result.total,
         limit,
         skip,
-        hasMore: result.total > skip + limit,
+        // a window clamped to the native cap reports the truncation here
+        hasMore: result.total > skip + window.limit,
       },
       nodes,
     };
@@ -80,15 +85,14 @@ export class SqliteIndexerStorage extends IndexerStorageBase {
     const skip = options?.pagination?.skip ?? 0;
     const hitLimit = options?.hits?.pagination?.limit ?? 3;
     const hitSkip = options?.hits?.pagination?.skip ?? 0;
+    const hitWindow = toNativeWindow(hitLimit, hitSkip);
     const result = await this.connection.apis.indexAggregate(
       String(table),
       toNativeQuery(query),
       String(field),
       toNativeLimit(limit),
       skip,
-      options?.hits
-        ? toNativeOptions(options.hits, hitLimit, hitSkip)
-        : undefined
+      options?.hits ? toNativeOptions(options.hits, hitWindow) : undefined
     );
     const hitsOptions = options?.hits;
     const buckets = result.buckets.map(bucket => ({
@@ -102,7 +106,7 @@ export class SqliteIndexerStorage extends IndexerStorageBase {
                 count: bucket.count,
                 limit: hitLimit,
                 skip: hitSkip,
-                hasMore: bucket.count > hitSkip + hitLimit,
+                hasMore: bucket.count > hitSkip + hitWindow.limit,
               },
               nodes: bucket.hits.map(hit => createNode(hit, hitsOptions)),
             },
@@ -236,13 +240,11 @@ function toNativeQuery(query: Query<any>): NativeIndexQuery {
 
 function toNativeOptions(
   options: SearchOptions<any> | undefined,
-  limit: number,
-  offset: number
+  window: { limit: number; offset: number }
 ): NativeIndexSearchOptions {
   const highlights = options?.highlights?.map(item => String(item.field)) ?? [];
   return {
-    limit: toNativeLimit(limit),
-    offset,
+    ...window,
     fields: [
       ...new Set([...(options?.fields?.map(String) ?? []), ...highlights]),
     ],
@@ -252,4 +254,18 @@ function toNativeOptions(
 
 function toNativeLimit(limit: number) {
   return limit === Infinity ? NATIVE_INDEXER_MAX_LIMIT : limit;
+}
+
+/**
+ * Only an unbounded limit is clamped to what memory-indexer accepts. An
+ * explicit window is passed through, so an oversized one still gets the native
+ * error instead of silently coming back empty.
+ */
+export function toNativeWindow(limit: number, offset: number) {
+  if (limit !== Infinity) return { limit, offset };
+  if (offset >= NATIVE_INDEXER_MAX_WINDOW) {
+    // nothing sensible to return; fail like an explicit oversized window does
+    throw new Error(`search window exceeds ${NATIVE_INDEXER_MAX_WINDOW}`);
+  }
+  return { limit: NATIVE_INDEXER_MAX_WINDOW - offset, offset };
 }
