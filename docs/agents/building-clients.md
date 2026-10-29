@@ -20,6 +20,44 @@ Shell: `packages/frontend/apps/android`, with native storage in
 `packages/frontend/apps/android/README.md`. The result is installed on the
 device directly (sideloaded APK).
 
+### Android build on Windows (canary arm64 debug APK)
+
+About 15 minutes cold, most of it Gradle and the Rust build of
+`mobile-native`.
+
+Prerequisites:
+
+- Android Studio. Its SDK Manager needs **SDK Platform 36** (the app's
+  `compileSdk`, from `App/gradle/libs.versions.toml`), **Build-Tools 36** and
+  **NDK (Side by side)**. `App/app/build.gradle` uses the last folder in
+  `<sdk>/ndk`.
+- The Rust target: `rustup target add aarch64-linux-android`.
+- A real `python3` on PATH. The cargo linker wrapper calls `python3`, and on
+  Windows that name is usually the Microsoft Store stub. Put a folder with
+  `python3.exe` (a copy of `python.exe`) first on PATH. The `rust.pythonCommand`
+  property has no effect on this.
+- `App/local.properties`: set `sdk.dir`, plus `rust.cargoCommand` and
+  `rust.rustcCommand` pointing at the `cargo.exe` and `rustc.exe` in
+  `<cargo home>/bin`. The file is gitignored.
+- `App/app/google-services.json`: copy the CI stub from
+  `.github/workflows/build-test.yml`. The file is gitignored.
+
+```sh
+export JAVA_HOME="<Android Studio>/jbr" ANDROID_HOME="<sdk>" CARGO_HOME="<cargo home>"
+export CMAKE_POLICY_VERSION_MINIMUM=3.5 BUILD_TYPE=canary PUBLIC_PATH=/
+yarn affine @affine/android build     # web bundle, ~1 min
+yarn affine @affine/android cap sync
+cd packages/frontend/apps/android/App && ./gradlew.bat assembleCanaryDebug
+```
+
+The build targets arm64 by default (`AFFINE_ANDROID_NATIVE_TARGET`). The
+output is `App/app/build/outputs/apk/canary/debug/app-canary-debug.apk`
+(~150 MB, debug-signed).
+
+The build rewrites the tracked
+`App/app/src/main/java/uniffi/affine_mobile_native/affine_mobile_native.kt`
+(whitespace only). Run `git checkout` on that file afterwards.
+
 ## Server and web
 
 The server image (`.github/deployment/node/Dockerfile`) bundles
