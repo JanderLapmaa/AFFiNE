@@ -58,6 +58,35 @@ The build rewrites the tracked
 `App/app/src/main/java/uniffi/affine_mobile_native/affine_mobile_native.kt`
 (whitespace only). Run `git checkout` on that file afterwards.
 
+### Testing the APK on the emulator
+
+An x86_64 Google Play system image from API 30 up lists `arm64-v8a` in
+`ro.product.cpu.abilist` and runs the arm64 APK through ARM translation, so
+there's no need for a separate x86_64 build. The emulator uses WHPX on
+Windows (`emulator -accel-check`).
+
+```sh
+emulator -list-avds                    # use the name exactly as listed (e.g. Medium_Phone_API_37.0)
+emulator -avd <name> -no-snapshot-load -no-boot-anim &
+adb wait-for-device && adb shell getprop sys.boot_completed   # 1 when booted (~60 s)
+adb install -r <apk> && adb shell monkey -p app.affine.pro -c android.intent.category.LAUNCHER 1
+```
+
+- **Driving the UI:** the debug build's WebView can be debugged. Find the
+  socket with `adb shell cat /proc/net/unix | grep webview_devtools_remote`,
+  then run `adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`.
+  `http://127.0.0.1:9222/json` lists the pages; a small Node script can send
+  `Runtime.evaluate` over CDP to read the DOM, click and clear localStorage.
+  Keep real `adb shell input tap` for anything where tap behaviour is under
+  test.
+- **Screenshots:** run `adb shell screencap -p /sdcard/s.png`, then
+  `adb pull`. In PowerShell, don't redirect `exec-out` with `>`; it corrupts
+  the PNG.
+- `adb shell input text` drops characters; type through CDP instead.
+- **App restarts:** with a 2 GB AVD the app can die from memory pressure
+  without a crash log. Relaunch it and redo `adb forward` for the new pid.
+- **Test data:** use a local workspace, not a signed-in server.
+
 ## Server and web
 
 The server image (`.github/deployment/node/Dockerfile`) bundles
