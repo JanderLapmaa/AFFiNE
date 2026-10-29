@@ -34,6 +34,13 @@ By hand, even cheaper:
 | One spec file             | `node_modules/.bin/vitest run <path>`                                                         |
 | Rust subset               | `cargo test -p affine_nbstore indexer::`                                                      |
 
+## Pre-commit hook
+
+The hook runs only `lint-staged` (oxfmt + `oxlint --fix` on staged files). The
+fork dropped upstream's extra whole-repo `yarn lint:ox` from it (~170 s per
+commit); the full lint stays in `yarn lint`, CI and the phase gate. The hook
+needs `yarn` on PATH (see the shim note).
+
 ## Phase gate (end of a phase, before handing over)
 
 `yarn typecheck`, `yarn lint`, `yarn test` (or `vitest run packages/frontend/core`),
