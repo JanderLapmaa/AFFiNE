@@ -20,6 +20,14 @@ Shell: `packages/frontend/apps/android`, with native storage in
 `packages/frontend/apps/android/README.md`. The result is installed on the
 device directly (sideloaded APK).
 
+The fork's `canary` flavour has its own application ID, `app.affine.pro.canary`,
+and its launcher label is "AFFiNE Canary". So it installs next to the official
+Play Store app (`app.affine.pro`, signed with a different key); installing over
+that app fails with `INSTALL_FAILED_VERSION_DOWNGRADE`. The two apps keep
+separate data, so sign in to the server again in the canary app. Both handle
+`affine://` sign-in links, so Android may ask which app to open. The Capacitor
+`appId` and the Kotlin namespace stay `app.affine.pro`.
+
 ### Android build on Windows (canary arm64 debug APK)
 
 About 15 minutes cold, most of it Gradle and the Rust build of
@@ -40,7 +48,9 @@ Prerequisites:
   `rust.rustcCommand` pointing at the `cargo.exe` and `rustc.exe` in
   `<cargo home>/bin`. The file is gitignored.
 - `App/app/google-services.json`: copy the CI stub from
-  `.github/workflows/build-test.yml`. The file is gitignored.
+  `.github/workflows/build-test.yml`. The file is gitignored. The plugin
+  matches its client entry by package name, so the stub must list
+  `app.affine.pro.canary` to build the canary flavour.
 
 ```sh
 export JAVA_HOME="<Android Studio>/jbr" ANDROID_HOME="<sdk>" CARGO_HOME="<cargo home>"

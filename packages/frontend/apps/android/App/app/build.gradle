@@ -68,7 +68,9 @@ android {
         stable
         beta
         internal
-        canary
+        canary {
+            applicationIdSuffix ".canary"
+        }
     }
 
     compileOptions {
