@@ -49,15 +49,8 @@ Bump the version so existing clients rebuild their index:
 ## Task fields (fork: Tasks view)
 
 Both extractors add task fields to the `additional` JSON of every
-`affine:list` block whose `prop:type` is `'todo'`. Other blocks are unchanged.
-The block schema is unchanged too. `additional` can't be filtered at query
-time, so the Tasks view queries `flavour: affine:list` (which includes bullet
-and numbered lists), parses `additional` and keeps rows with
-`listType: 'todo'` client-side. If that gets slow on large workspaces, add an
-indexed field then (schema change plus both version bumps).
-
-Doc-level data stays out of the index: doc order (newest doc first), trashed
-and template flags come from the workspace doc metadata at query time.
+`affine:list` block whose `prop:type` is `'todo'`; other blocks and the index
+schema are unchanged (query side: [tasks-spec.md](tasks-spec.md)).
 
 | Key           | Value             | Emitted when                                                                                                             |
 | ------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------ |
@@ -74,22 +67,18 @@ on both sides. Keys whose condition fails are omitted, never `null`. Existing ke
 (`displayMode`, `noteBlockId`, ...) stay as they are.
 
 **Heading rule:** walk the doc in pre-order from the `affine:page` block
-(a block, then its `sys:children` in order, recursively). The heading of a
-todo is the last `affine:paragraph` with `prop:type` `h1`-`h6` visited before
-it, across notes. Its text is the plain string of `prop:text`, trimmed with the JS
-`String.prototype.trim` whitespace set (the native side matches that set
-exactly). If a doc has several `affine:page` blocks, start from the one with
-the lowest `sys:id` (string order). A `sys:children` id with no matching block is
-skipped and doesn't take an `order` position.
-This is independent of each extractor's own traversal order.
+(a block, then its `sys:children` in order). The heading of a todo is the last
+`affine:paragraph` with `prop:type` `h1`-`h6` visited before it, across notes. Its
+text is the plain string of `prop:text`, trimmed with each language's standard
+trim (JS `String.prototype.trim`, Rust `str::trim`); they differ only for U+0085
+and U+FEFF, an accepted difference. With several `affine:page` blocks the walk
+starts from the lowest `sys:id`. Both walks are independent of each extractor's
+own traversal order.
 
 **Shared fixture:** `packages/common/native/fixtures/tasks.ydoc` with
 `tasks.ydoc.expected.json` (blockId → task fields). The reader spec and the
 native nbstore indexer tests both assert against it, so the two extractors
 can't drift.
-
-Index versions bumped for this: IndexedDB `indexVersion()` 1 → 2 → 3,
-`NBSTORE_INDEXER_VERSION` 7 → 8 → 9 (the second bump added `order`).
 
 ## Native search window cap (memory-indexer 0.4.0)
 

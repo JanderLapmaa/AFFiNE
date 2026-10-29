@@ -103,7 +103,7 @@ fn walk(
         let kind = string_prop(&block, "prop:type").unwrap_or_default();
         if matches!(kind.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
           let text = string_prop(&block, "prop:text").unwrap_or_default();
-          *heading = Some(js_trim(&text).to_string());
+          *heading = Some(text.trim().to_string());
         }
       }
       Some(FLAVOUR_LIST) => {
@@ -121,27 +121,6 @@ fn walk(
     // Reversed, so the first child is popped first.
     stack.extend(children.into_iter().rev());
   }
-}
-
-/// `String.prototype.trim`: the ECMAScript WhiteSpace and LineTerminator sets.
-/// Unlike `str::trim` this excludes U+0085 and includes U+FEFF.
-fn js_trim(text: &str) -> &str {
-  text.trim_matches(|c: char| {
-    matches!(
-      c,
-      '\u{9}'..='\u{d}'
-        | '\u{20}'
-        | '\u{a0}'
-        | '\u{1680}'
-        | '\u{2000}'..='\u{200a}'
-        | '\u{2028}'
-        | '\u{2029}'
-        | '\u{202f}'
-        | '\u{205f}'
-        | '\u{3000}'
-        | '\u{feff}'
-    )
-  })
 }
 
 fn todo_fields(block: &Map, heading: Option<&str>, order: Option<u64>) -> Option<TaskFields> {

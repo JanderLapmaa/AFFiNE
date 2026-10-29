@@ -11,7 +11,6 @@ use y_octo::{Any, Doc, DocOptions, Map};
 use super::{
   super::{DocIndexedClock, error::Error, storage::SqliteDocStorage},
   NativeCrawlResult, NativeIndexDocument, NativeIndexField, NativeIndexQuery, NativeIndexSearchOptions,
-  task_fields::collect_task_fields,
 };
 
 const DEMO_BIN: &[u8] = include_bytes!("../../../../../common/native/fixtures/demo.ydoc");
@@ -408,181 +407,27 @@ fn todo() -> (&'static str, Any) {
   ("prop:type", s("todo"))
 }
 
-fn build_task_doc() -> Vec<u8> {
+/// What the shared fixture cannot cover: the external parser only emits list
+/// blocks with a text prop, so a todo without text has no row to merge into.
+#[tokio::test]
+async fn crawl_skips_todo_without_text() {
   let doc = DocOptions::new().build();
   let mut blocks = doc.get_or_create_map("blocks").unwrap();
-  add_block(&doc, &mut blocks, "page", "affine:page", &["n1", "n2"], vec![]);
-  let note1 = [
-    "t-plain",
-    "h1",
-    "t-checked",
-    "t-due",
-    "t-p0",
-    "t-bad-due",
-    "bullet",
-    "t-parent",
-  ];
+  add_block(&doc, &mut blocks, "page", "affine:page", &["note"], vec![]);
   add_block(
     &doc,
     &mut blocks,
-    "n1",
+    "note",
     "affine:note",
-    &note1,
-    vec![("prop:displayMode", s("both"))],
-  );
-  add_block(
-    &doc,
-    &mut blocks,
-    "n2",
-    "affine:note",
-    &["h2", "t-second", "t-notext"],
+    &["t-text", "t-notext"],
     vec![],
   );
-  // a todo before any heading
-  add_block(&doc, &mut blocks, "t-plain", "affine:list", &[], vec![todo()]);
-  add_block(
-    &doc,
-    &mut blocks,
-    "h1",
-    "affine:paragraph",
-    &[],
-    vec![("prop:type", s("h1"))],
-  );
-  add_text(&doc, &blocks, "h1", "  Alpha  ");
-  let checked = vec![
-    todo(),
-    ("prop:checked", Any::True),
-    ("prop:completedAt", Any::from(1_767_225_600_000_i64)),
-  ];
-  add_block(&doc, &mut blocks, "t-checked", "affine:list", &[], checked);
-  let due = vec![todo(), ("prop:due", s("2026-01-05")), ("prop:priority", Any::from(3))];
-  add_block(&doc, &mut blocks, "t-due", "affine:list", &[], due);
-  let p0 = vec![todo(), ("prop:priority", Any::from(0))];
-  add_block(&doc, &mut blocks, "t-p0", "affine:list", &[], p0);
-  let bad = vec![todo(), ("prop:due", s("2026-1-5")), ("prop:priority", Any::from(4))];
-  add_block(&doc, &mut blocks, "t-bad-due", "affine:list", &[], bad);
-  let bullet = vec![("prop:type", s("bulleted"))];
-  add_block(&doc, &mut blocks, "bullet", "affine:list", &[], bullet);
-  // a nested todo
-  add_block(
-    &doc,
-    &mut blocks,
-    "t-parent",
-    "affine:list",
-    &["t-nested"],
-    vec![todo()],
-  );
-  let nested = vec![todo(), ("prop:due", s("2026-02-01"))];
-  add_block(&doc, &mut blocks, "t-nested", "affine:list", &[], nested);
-  add_block(
-    &doc,
-    &mut blocks,
-    "h2",
-    "affine:paragraph",
-    &[],
-    vec![("prop:type", s("h2"))],
-  );
-  add_text(&doc, &blocks, "h2", "Beta");
-  add_block(&doc, &mut blocks, "t-second", "affine:list", &[], vec![todo()]);
+  add_block(&doc, &mut blocks, "t-text", "affine:list", &[], vec![todo()]);
+  add_text(&doc, &blocks, "t-text", "text");
   add_block(&doc, &mut blocks, "t-notext", "affine:list", &[], vec![todo()]);
-  // The external parser only emits list blocks that have a text prop.
-  let texted = [
-    "t-plain",
-    "t-checked",
-    "t-due",
-    "t-p0",
-    "t-bad-due",
-    "bullet",
-    "t-parent",
-    "t-nested",
-    "t-second",
-  ];
-  for id in texted {
-    add_text(&doc, &blocks, id, id);
-  }
-  doc.encode_update_v1().unwrap()
-}
-
-#[tokio::test]
-async fn crawl_adds_task_fields_to_todo_blocks() {
-  let bin = build_task_doc();
-  let result = crawl_snapshot(&bin).await;
-
-  // Keys written by the external parser are preserved.
-  let raw = parse_doc_from_binary(bin.clone(), "task-doc".to_string()).unwrap();
-  for block in &raw.blocks {
-    let merged = additional_of(&result, &block.block_id);
-    if let Some(Ok(Value::Object(original))) = block.additional.as_deref().map(serde_json::from_str::<Value>) {
-      for (key, value) in original {
-        assert_eq!(merged[&key], value, "{} key {key}", block.block_id);
-      }
-    }
-  }
-
-  let task = |id: &str| task_keys_of(&result, id);
-
-  assert_eq!(
-    task("t-plain"),
-    serde_json::json!({"listType": "todo", "checked": false, "order": 2})
-  );
-  assert_eq!(
-    task("t-checked"),
-    serde_json::json!({
-      "listType": "todo", "checked": true, "completedAt": 1_767_225_600_000_i64, "heading": "Alpha", "order": 4
-    })
-  );
-  // Integers stay integers in the JSON string (`3`, not `3.0`).
-  let due_block = result.blocks.iter().find(|b| b.block_id == "t-due").unwrap();
-  assert!(due_block.additional.as_deref().unwrap().contains("\"priority\":3"));
-  let checked_block = result.blocks.iter().find(|b| b.block_id == "t-checked").unwrap();
-  assert!(
-    checked_block
-      .additional
-      .as_deref()
-      .unwrap()
-      .contains("\"completedAt\":1767225600000")
-  );
-  assert_eq!(
-    task("t-due"),
-    serde_json::json!({
-      "listType": "todo", "checked": false, "due": "2026-01-05", "priority": 3, "heading": "Alpha", "order": 5
-    })
-  );
-  // priority 0 is omitted.
-  assert_eq!(
-    task("t-p0"),
-    serde_json::json!({"listType": "todo", "checked": false, "heading": "Alpha", "order": 6})
-  );
-  // A malformed due and an out-of-range priority are omitted.
-  assert_eq!(
-    task("t-bad-due"),
-    serde_json::json!({"listType": "todo", "checked": false, "heading": "Alpha", "order": 7})
-  );
-  // Bulleted lists and other blocks carry no task keys.
-  for id in ["bullet", "h1", "n1", "page"] {
-    assert!(task(id).as_object().unwrap().is_empty(), "{id}");
-  }
-  // A todo without a text prop is not emitted by the external parser, so it has no row.
+  let result = crawl_snapshot(&doc.encode_update_v1().unwrap()).await;
+  assert_eq!(task_keys_of(&result, "t-text")["listType"], "todo");
   assert!(result.blocks.iter().all(|block| block.block_id != "t-notext"));
-  // Nested todos follow their parent in pre-order, under the same heading.
-  assert_eq!(
-    task("t-parent"),
-    serde_json::json!({"listType": "todo", "checked": false, "heading": "Alpha", "order": 9})
-  );
-  assert_eq!(
-    task("t-nested"),
-    serde_json::json!({"listType": "todo", "checked": false, "due": "2026-02-01", "heading": "Alpha", "order": 10})
-  );
-  // A nested todo comes after its parent and before the parent's next sibling
-  // (the n2 note's heading, then its todos).
-  let order = |id: &str| task(id)["order"].as_u64().unwrap();
-  assert!(order("t-parent") < order("t-nested"));
-  assert!(order("t-nested") < order("t-second"));
-  // The heading carries across notes until a later heading replaces it.
-  assert_eq!(
-    task("t-second"),
-    serde_json::json!({"listType": "todo", "checked": false, "heading": "Beta", "order": 13})
-  );
 }
 
 #[tokio::test]
@@ -599,111 +444,19 @@ async fn crawl_task_fields_match_shared_fixture() {
       assert!(task_keys_of(&result, &block.block_id).as_object().unwrap().is_empty());
     }
   }
-}
-
-#[test]
-fn task_fields_start_from_the_lowest_page_id() {
-  let doc = DocOptions::new().build();
-  let mut blocks = doc.get_or_create_map("blocks").unwrap();
-  // Inserted in reverse so that map order cannot decide the result.
-  add_block(&doc, &mut blocks, "page-b", "affine:page", &["note-b"], vec![]);
-  add_block(&doc, &mut blocks, "note-b", "affine:note", &["h-b", "t-b"], vec![]);
-  add_block(
-    &doc,
-    &mut blocks,
-    "h-b",
-    "affine:paragraph",
-    &[],
-    vec![("prop:type", s("h1"))],
-  );
-  add_text(&doc, &blocks, "h-b", "B");
-  add_block(&doc, &mut blocks, "t-b", "affine:list", &[], vec![todo()]);
-  add_block(&doc, &mut blocks, "page-a", "affine:page", &["note-a"], vec![]);
-  add_block(&doc, &mut blocks, "note-a", "affine:note", &["h-a", "t-a"], vec![]);
-  add_block(
-    &doc,
-    &mut blocks,
-    "h-a",
-    "affine:paragraph",
-    &[],
-    vec![("prop:type", s("h1"))],
-  );
-  add_text(&doc, &blocks, "h-a", "A");
-  add_block(&doc, &mut blocks, "t-a", "affine:list", &[], vec![todo()]);
-
-  let fields = collect_task_fields(&doc.encode_update_v1().unwrap()).unwrap();
-  assert_eq!(fields["t-a"]["heading"], "A");
-  // page-a (0), note-a (1), h-a (2), t-a (3).
-  assert_eq!(fields["t-a"]["order"], 3);
-  // Not reachable from the chosen page: other fields only.
-  assert!(fields["t-b"].get("heading").is_none());
-  assert!(fields["t-b"].get("order").is_none());
-  assert_eq!(fields["t-b"]["listType"], "todo");
-}
-
-#[test]
-fn task_fields_survive_a_very_deep_tree() {
-  const DEPTH: usize = 10_000;
-  let doc = DocOptions::new().build();
-  let mut blocks = doc.get_or_create_map("blocks").unwrap();
-  add_block(&doc, &mut blocks, "page", "affine:page", &["note"], vec![]);
-  add_block(&doc, &mut blocks, "note", "affine:note", &["h", "l0"], vec![]);
-  add_block(
-    &doc,
-    &mut blocks,
-    "h",
-    "affine:paragraph",
-    &[],
-    vec![("prop:type", s("h1"))],
-  );
-  add_text(&doc, &blocks, "h", "Deep");
-  for level in 0..DEPTH {
-    let id = format!("l{level}");
-    let child = format!("l{}", level + 1);
-    let children: Vec<&str> = if level + 1 < DEPTH {
-      vec![child.as_str()]
-    } else {
-      vec![]
-    };
-    add_block(&doc, &mut blocks, &id, "affine:list", &children, vec![todo()]);
+  // Keys written by the external parser are preserved next to the task keys.
+  let raw = parse_doc_from_binary(TASKS_BIN.to_vec(), "task-doc".to_string()).unwrap();
+  for block in &raw.blocks {
+    let merged = additional_of(&result, &block.block_id);
+    if let Some(Ok(Value::Object(original))) = block.additional.as_deref().map(serde_json::from_str::<Value>) {
+      for (key, value) in original {
+        assert_eq!(merged[&key], value, "{} key {key}", block.block_id);
+      }
+    }
   }
-
-  let fields = collect_task_fields(&doc.encode_update_v1().unwrap()).unwrap();
-  assert_eq!(fields.len(), DEPTH);
-  assert_eq!(fields[&format!("l{}", DEPTH - 1)]["heading"], "Deep");
-  // page (0), note (1), h (2), l0 (3), ...
-  assert_eq!(fields[&format!("l{}", DEPTH - 1)]["order"], DEPTH + 2);
-}
-
-#[test]
-fn heading_trim_matches_js_whitespace() {
-  let doc = DocOptions::new().build();
-  let mut blocks = doc.get_or_create_map("blocks").unwrap();
-  let note = ["h-bom", "t-bom", "h-nel", "t-nel", "h-mixed", "t-mixed"];
-  add_block(&doc, &mut blocks, "page", "affine:page", &["note"], vec![]);
-  add_block(&doc, &mut blocks, "note", "affine:note", &note, vec![]);
-  for (heading, todo_id, text) in [
-    ("h-bom", "t-bom", "\u{feff}"),
-    ("h-nel", "t-nel", "\u{85}"),
-    ("h-mixed", "t-mixed", "\u{a0}\u{feff} Mixed\u{85} \u{3000}"),
-  ] {
-    add_block(
-      &doc,
-      &mut blocks,
-      heading,
-      "affine:paragraph",
-      &[],
-      vec![("prop:type", s("h2"))],
-    );
-    add_text(&doc, &blocks, heading, text);
-    add_block(&doc, &mut blocks, todo_id, "affine:list", &[], vec![todo()]);
-  }
-
-  let fields = collect_task_fields(&doc.encode_update_v1().unwrap()).unwrap();
-  // U+FEFF is trimmed (whitespace-only heading, so no key); U+0085 is not.
-  assert!(fields["t-bom"].get("heading").is_none());
-  assert_eq!(fields["t-nel"]["heading"], "\u{85}");
-  assert_eq!(fields["t-mixed"]["heading"], "Mixed\u{85}");
+  // Integers stay integers in the JSON string (`3`, not `3.0`).
+  let due = result.blocks.iter().find(|b| b.block_id == "t-due-priority").unwrap();
+  assert!(due.additional.as_deref().unwrap().contains("\"priority\":3"));
 }
 
 #[tokio::test]

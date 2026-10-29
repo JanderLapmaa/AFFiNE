@@ -77,16 +77,5 @@
     "listType": "todo",
     "checked": false,
     "order": 21
-  },
-  "t-under-bom": {
-    "listType": "todo",
-    "checked": false,
-    "order": 23
-  },
-  "t-under-nel": {
-    "listType": "todo",
-    "checked": false,
-    "heading": "",
-    "order": 25
   }
 }

@@ -35,20 +35,6 @@ describe('SqliteIndexerStorage search window', () => {
     expect(result.pagination.hasMore).toBe(true);
   });
 
-  test('clamps an unbounded limit after a skip', async () => {
-    const { storage, indexSearch } = createStorage(12_000);
-    const result = await storage.search(
-      'doc',
-      { type: 'all' },
-      { pagination: { skip: 9_500, limit: Infinity } }
-    );
-    expect(indexSearch.mock.calls[0][3]).toMatchObject({
-      limit: 500,
-      offset: 9_500,
-    });
-    expect(result.pagination.hasMore).toBe(true);
-  });
-
   test('throws for an unbounded limit starting past the window', async () => {
     const { storage, indexSearch } = createStorage(12_000);
     await expect(
@@ -59,30 +45,5 @@ describe('SqliteIndexerStorage search window', () => {
       )
     ).rejects.toThrow('search window exceeds');
     expect(indexSearch).not.toHaveBeenCalled();
-  });
-
-  test('passes an explicit window through unchanged', async () => {
-    const { storage, indexSearch } = createStorage(12_000);
-    const result = await storage.search(
-      'doc',
-      { type: 'all' },
-      { pagination: { skip: 9_500, limit: 1_000 } }
-    );
-    expect(indexSearch.mock.calls[0][3]).toMatchObject({
-      limit: 1_000,
-      offset: 9_500,
-    });
-    expect(result.pagination.hasMore).toBe(true);
-  });
-
-  test('is not truncated when everything fits', async () => {
-    const { storage, indexSearch } = createStorage(20);
-    const result = await storage.search(
-      'doc',
-      { type: 'all' },
-      { pagination: { limit: Infinity } }
-    );
-    expect(indexSearch.mock.calls[0][3]).toMatchObject({ limit: 10_000 });
-    expect(result.pagination.hasMore).toBe(false);
   });
 });

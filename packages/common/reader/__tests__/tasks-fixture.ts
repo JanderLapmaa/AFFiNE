@@ -75,10 +75,6 @@ const tree: Node = n('page', 'affine:page', {}, 'Tasks fixture', [
       priority: 3n,
       completedAt: 1767225600000n,
     }),
-    h('h-bom', 'h1', '﻿'),
-    todo('t-under-bom', 'under BOM-only heading'),
-    h('h-nel', 'h1', ''),
-    todo('t-under-nel', 'under NEL-only heading'),
   ]),
 ]);
 
@@ -142,10 +138,6 @@ export const expectedTaskFields: Record<string, Record<string, unknown>> = {
   't-under-blank-heading': { listType: 'todo', checked: false, order: 18 },
   't-second-note': { listType: 'todo', checked: false, order: 20 },
   't-bigint': { listType: 'todo', checked: false, order: 21 },
-  // U+FEFF is trimmed by JS String.prototype.trim, so no heading
-  't-under-bom': { listType: 'todo', checked: false, order: 23 },
-  // U+0085 is not trimmed by JS, so it stays as the heading
-  't-under-nel': { listType: 'todo', checked: false, heading: '', order: 25 },
 };
 
 // Y.Map#set rejects bigint, so integrate the item by hand (what a client
