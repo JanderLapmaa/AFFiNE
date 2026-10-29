@@ -50,6 +50,7 @@ import { InviteMembersButton } from './invite-members-button';
 import { AppSidebarJournalButton } from './journal-button';
 import { NotificationButton } from './notification-button';
 import { SidebarAudioPlayer } from './sidebar-audio-player';
+import { TasksButton } from './tasks-button';
 import { TemplateDocEntrance } from './template-doc-entrance';
 import { TrashButton } from './trash-button';
 import { UpdaterButton } from './updater-button';
@@ -213,6 +214,7 @@ export const RootAppSidebar = memo((): ReactElement => {
         </div>
         <AllDocsButton />
         <AppSidebarJournalButton />
+        <TasksButton />
         {sessionStatus === 'authenticated' && <NotificationButton />}
         <AIChatButton />
         <MenuItem

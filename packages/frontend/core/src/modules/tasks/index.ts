@@ -5,6 +5,7 @@ import { WorkspaceScope, WorkspaceService } from '../workspace';
 import { TasksService } from './services/tasks';
 import { TasksClockStore } from './services/tasks-clock';
 
+export { addDays, localDay } from './date';
 export { TasksService } from './services/tasks';
 export { TasksClockStore } from './services/tasks-clock';
 export type {
@@ -15,6 +16,7 @@ export type {
   TasksClock,
   TasksCounts,
   TasksState,
+  TasksUndoToken,
   TasksViewId,
 } from './types';
 

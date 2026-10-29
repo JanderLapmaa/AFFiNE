@@ -7989,6 +7989,286 @@ export function useAFFiNEI18N(): {
       */
     ["com.affine.tomorrow"](): string;
     /**
+      * `Tasks`
+      */
+    ["com.affine.tasks.title"](): string;
+    /**
+      * `Show task views`
+      */
+    ["com.affine.tasks.nav.toggle"](): string;
+    /**
+      * `Inbox`
+      */
+    ["com.affine.tasks.view.inbox"](): string;
+    /**
+      * `Today`
+      */
+    ["com.affine.tasks.view.today"](): string;
+    /**
+      * `Tomorrow`
+      */
+    ["com.affine.tasks.view.tomorrow"](): string;
+    /**
+      * `Next 7 Days`
+      */
+    ["com.affine.tasks.view.next7"](): string;
+    /**
+      * `All tasks`
+      */
+    ["com.affine.tasks.view.all"](): string;
+    /**
+      * `Completed`
+      */
+    ["com.affine.tasks.view.completed"](): string;
+    /**
+      * `Today`
+      */
+    ["com.affine.tasks.date.today"](): string;
+    /**
+      * `Tomorrow`
+      */
+    ["com.affine.tasks.date.tomorrow"](): string;
+    /**
+      * `{{count}}d ago`
+      */
+    ["com.affine.tasks.date.days-ago"](options: {
+        readonly count: string;
+    }): string;
+    /**
+      * `Due {{date}}`
+      */
+    ["com.affine.tasks.date.due"](options: {
+        readonly date: string;
+    }): string;
+    /**
+      * `Overdue`
+      */
+    ["com.affine.tasks.group.overdue"](): string;
+    /**
+      * `Scheduled`
+      */
+    ["com.affine.tasks.group.scheduled"](): string;
+    /**
+      * `No date (priority only)`
+      */
+    ["com.affine.tasks.group.no-date"](): string;
+    /**
+      * `Inbox`
+      */
+    ["com.affine.tasks.group.inbox"](): string;
+    /**
+      * `Completed today`
+      */
+    ["com.affine.tasks.group.completed-today"](): string;
+    /**
+      * `Completed {{date}}`
+      */
+    ["com.affine.tasks.group.completed-day"](options: {
+        readonly date: string;
+    }): string;
+    /**
+      * `Untitled`
+      */
+    ["com.affine.tasks.group.untitled-doc"](): string;
+    /**
+      * `Toggle task`
+      */
+    ["com.affine.tasks.row.toggle"](): string;
+    /**
+      * `Open in doc`
+      */
+    ["com.affine.tasks.row.open-source"](): string;
+    /**
+      * `Quick add`
+      */
+    ["com.affine.tasks.row.quick-add"](): string;
+    /**
+      * `Low priority`
+      */
+    ["com.affine.tasks.priority.low"](): string;
+    /**
+      * `Medium priority`
+      */
+    ["com.affine.tasks.priority.medium"](): string;
+    /**
+      * `High priority`
+      */
+    ["com.affine.tasks.priority.high"](): string;
+    /**
+      * `Go to Inbox`
+      */
+    ["com.affine.tasks.empty.go-to-inbox"](): string;
+    /**
+      * `Inbox zero`
+      */
+    ["com.affine.tasks.empty.inbox.title"](): string;
+    /**
+      * `Every checkbox from your docs has a date or priority.`
+      */
+    ["com.affine.tasks.empty.inbox.description"](): string;
+    /**
+      * `Nothing due today`
+      */
+    ["com.affine.tasks.empty.today.title"](): string;
+    /**
+      * `Enjoy it, or pull something in from the Inbox.`
+      */
+    ["com.affine.tasks.empty.today.description"](): string;
+    /**
+      * `Nothing planned for tomorrow`
+      */
+    ["com.affine.tasks.empty.tomorrow.title"](): string;
+    /**
+      * `Schedule tasks from the Inbox to see them here.`
+      */
+    ["com.affine.tasks.empty.tomorrow.description"](): string;
+    /**
+      * `A clear week`
+      */
+    ["com.affine.tasks.empty.next7.title"](): string;
+    /**
+      * `Nothing planned in the next 7 days. Schedule tasks from the Inbox to see them here.`
+      */
+    ["com.affine.tasks.empty.next7.description"](): string;
+    /**
+      * `No tasks yet`
+      */
+    ["com.affine.tasks.empty.all.title"](): string;
+    /**
+      * `Type [ ] in any doc to make a checkbox. Every TODO from every doc will show up here.`
+      */
+    ["com.affine.tasks.empty.all.description"](): string;
+    /**
+      * `No completed tasks`
+      */
+    ["com.affine.tasks.empty.completed.title"](): string;
+    /**
+      * `Checked tasks show up here.`
+      */
+    ["com.affine.tasks.empty.completed.description"](): string;
+    /**
+      * `Couldn't load tasks`
+      */
+    ["com.affine.tasks.error.title"](): string;
+    /**
+      * `Retry`
+      */
+    ["com.affine.tasks.error.retry"](): string;
+    /**
+      * `Set date`
+      */
+    ["com.affine.tasks.row.set-date"](): string;
+    /**
+      * `Set priority`
+      */
+    ["com.affine.tasks.row.set-priority"](): string;
+    /**
+      * `Date`
+      */
+    ["com.affine.tasks.triage.date"](): string;
+    /**
+      * `Next Monday`
+      */
+    ["com.affine.tasks.triage.date.next-monday"](): string;
+    /**
+      * `In a week`
+      */
+    ["com.affine.tasks.triage.date.in-a-week"](): string;
+    /**
+      * `Pick a date`
+      */
+    ["com.affine.tasks.triage.date.pick"](): string;
+    /**
+      * `Clear`
+      */
+    ["com.affine.tasks.triage.date.clear"](): string;
+    /**
+      * `Priority`
+      */
+    ["com.affine.tasks.triage.priority"](): string;
+    /**
+      * `High`
+      */
+    ["com.affine.tasks.triage.priority.high"](): string;
+    /**
+      * `Medium`
+      */
+    ["com.affine.tasks.triage.priority.medium"](): string;
+    /**
+      * `Low`
+      */
+    ["com.affine.tasks.triage.priority.low"](): string;
+    /**
+      * `None`
+      */
+    ["com.affine.tasks.triage.priority.none"](): string;
+    /**
+      * `Scheduled for {{date}}`
+      */
+    ["com.affine.tasks.toast.scheduled"](options: {
+        readonly date: string;
+    }): string;
+    /**
+      * `Date cleared`
+      */
+    ["com.affine.tasks.toast.date-cleared"](): string;
+    /**
+      * `Priority: {{priority}}`
+      */
+    ["com.affine.tasks.toast.priority"](options: {
+        readonly priority: string;
+    }): string;
+    /**
+      * `Priority cleared`
+      */
+    ["com.affine.tasks.toast.priority-cleared"](): string;
+    /**
+      * `Completed`
+      */
+    ["com.affine.tasks.toast.completed"](): string;
+    /**
+      * `Reopened`
+      */
+    ["com.affine.tasks.toast.reopened"](): string;
+    /**
+      * `{{message}} · left Inbox`
+      */
+    ["com.affine.tasks.toast.left-inbox"](options: {
+        readonly message: string;
+    }): string;
+    /**
+      * `Undo`
+      */
+    ["com.affine.tasks.toast.undo"](): string;
+    /**
+      * `Couldn't update the task`
+      */
+    ["com.affine.tasks.toast.error"](): string;
+    /**
+      * `Can't undo anymore`
+      */
+    ["com.affine.tasks.toast.undo-stale"](): string;
+    /**
+      * `Couldn't undo the change`
+      */
+    ["com.affine.tasks.toast.undo-error"](): string;
+    /**
+      * `Task details`
+      */
+    ["com.affine.tasks.detail.title"](): string;
+    /**
+      * `Close details`
+      */
+    ["com.affine.tasks.detail.close"](): string;
+    /**
+      * `Select a task to see its details.`
+      */
+    ["com.affine.tasks.detail.empty"](): string;
+    /**
+      * `Source`
+      */
+    ["com.affine.tasks.detail.source"](): string;
+    /**
       * `Last {{weekday}}`
       */
     ["com.affine.last-week"](options: {

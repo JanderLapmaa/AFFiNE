@@ -27,7 +27,7 @@ browser; desktop and Android layouts, clickable). Background:
 - Desktop: the AFFiNE sidebar already holds workspace navigation, so a second tab
   strip would be crowded. A 210px inner nav (as in TickTick) holds:
   Inbox, Today, Tomorrow, Next 7 Days, then a divider, then All tasks and
-  Completed. Each shows an unchecked count. Collapsible via the usual
+  Completed. Each shows an unchecked count (Completed shows its checked count). Collapsible via the usual
   sidebar-toggle pattern when the window is narrow (< 900px).
 - Mobile: no inner sidebar. A horizontally scrollable chip row under the title:
   Inbox, Today, Tomorrow, Next 7 Days, All, Done, each with a count. The chip
@@ -105,7 +105,7 @@ panel (desktop), bottom sheet (mobile).
 
 ## Detail panel
 
-Desktop right panel (300px) or mobile bottom sheet: title, date and priority
+Desktop right panel (the workbench right sidebar, 320px default, resizable) or mobile bottom sheet: title, date and priority
 editor, source box (doc, heading, **Open in doc**). The title is read-only in v1
 (edit it in the doc); inline editing needs rich-text round-tripping and is
 deferred.

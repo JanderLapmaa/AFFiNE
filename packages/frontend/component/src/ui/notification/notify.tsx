@@ -36,6 +36,9 @@ export function notify(notification: Notification, options?: ExternalToast) {
   }, options);
 }
 
+/** Closes a toast by the id `notify` returned. */
+notify.dismiss = (id?: string | number) => toast.dismiss(id);
+
 notify.error = (
   notification: Notification | UserFriendlyError,
   options?: ExternalToast

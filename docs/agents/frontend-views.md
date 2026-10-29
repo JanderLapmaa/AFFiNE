@@ -41,3 +41,12 @@ Modules you will often depend on:
 ## Strings
 
 Add UI strings to `packages/frontend/i18n/src/resources/en.json`.
+
+## Pitfall: persisted Electron tab state
+
+Electron persists open tabs (`apps/electron/src/main/shared-state-schema.ts`)
+and parses them strictly. Don't add new enum values there (for example a new
+`iconName`): an official or older build sharing the same profile would throw
+on it. Reuse an existing value and pick the visual icon on the renderer side
+(the Tasks page persists `journal` and `app-tabs-header.tsx` draws its own
+icon for `/tasks`).

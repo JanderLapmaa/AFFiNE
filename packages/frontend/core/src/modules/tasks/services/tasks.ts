@@ -360,6 +360,11 @@ export class TasksService extends Service {
   /** Inbox size, for the sidebar entry and tab badge. */
   readonly inboxCount$: LiveData<number>;
 
+  /** Current time from the service clock (the UI's "now"). */
+  now(): number {
+    return this.clock.now();
+  }
+
   /** Ordered groups of one view. Labels are left to the UI. */
   view$(viewId: TasksViewId): LiveData<TaskGroup[]> {
     let view = this.views.get(viewId);

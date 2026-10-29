@@ -12,7 +12,12 @@ import { useCatchEventCallback } from '@affine/core/components/hooks/use-catch-e
 import type { AffineDNDData } from '@affine/core/types/dnd';
 import { useI18n } from '@affine/i18n';
 import { track } from '@affine/track';
-import { CloseIcon, PlusIcon, RightSidebarIcon } from '@blocksuite/icons/rc';
+import {
+  CloseIcon,
+  DoneIcon,
+  PlusIcon,
+  RightSidebarIcon,
+} from '@blocksuite/icons/rc';
 import {
   useLiveData,
   useService,
@@ -180,7 +185,13 @@ const WorkbenchView = ({
       <>
         <div className={styles.labelIcon}>
           {workbench.ready || !workbench.loaded ? (
-            iconNameToIcon[view.iconName ?? 'allDocs']
+            // The Tasks view persists a stock icon name (older builds sharing
+            // the profile reject unknown ones); draw its own icon from the path.
+            view.path?.pathname === '/tasks' ? (
+              <DoneIcon />
+            ) : (
+              iconNameToIcon[view.iconName ?? 'allDocs']
+            )
           ) : (
             <Loading />
           )}
