@@ -7,6 +7,7 @@
   "module": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./task-fields": "./src/task-fields.ts",
     "./dist": "./dist/index.js"
   },
   "scripts": {

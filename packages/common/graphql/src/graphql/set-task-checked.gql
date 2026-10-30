@@ -1,0 +1,27 @@
+mutation setTaskChecked(
+  $workspaceId: String!
+  $docId: String!
+  $blockId: String!
+  $checked: Boolean!
+) {
+  setTaskChecked(
+    workspaceId: $workspaceId
+    docId: $docId
+    blockId: $blockId
+    checked: $checked
+  ) {
+    docId
+    blockId
+    text
+    refs {
+      offset
+      docId
+    }
+    heading
+    order
+    checked
+    due
+    priority
+    completedAt
+  }
+}

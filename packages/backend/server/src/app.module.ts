@@ -51,6 +51,7 @@ import { StaticFileModule } from './core/static-files';
 import { StorageApiModule, StorageWorkerModule } from './core/storage';
 import { StorageRuntimeModule } from './core/storage-runtime';
 import { SyncModule } from './core/sync';
+import { TaskModule } from './core/tasks';
 import { TelemetryModule } from './core/telemetry';
 import { UserModule } from './core/user';
 import { VersionModule } from './core/version';
@@ -190,6 +191,8 @@ export function buildAppModule(env: Env) {
     .use(ServerConfigModule, QuotaModule, DocStorageModule)
     .useIf(() => env.isWorker, StorageWorkerModule)
     .useIf(() => !workerOnly, FeatureModule, NotificationModule, MailModule)
+    // task list extractor (sync flavor) and API (graphql flavor)
+    .useIf(() => !workerOnly, TaskModule)
     // renderer server and front server
     .useIf(() => env.flavors.renderer || env.flavors.front, DocRendererModule)
     // sync server and front server

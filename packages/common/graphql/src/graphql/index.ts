@@ -2565,6 +2565,33 @@ ${passwordLimitsFragment}
 ${credentialsRequirementsFragment}`,
 };
 
+export const setTaskCheckedMutation = {
+  id: 'setTaskCheckedMutation' as const,
+  op: 'setTaskChecked',
+  query: `mutation setTaskChecked($workspaceId: String!, $docId: String!, $blockId: String!, $checked: Boolean!) {
+  setTaskChecked(
+    workspaceId: $workspaceId
+    docId: $docId
+    blockId: $blockId
+    checked: $checked
+  ) {
+    docId
+    blockId
+    text
+    refs {
+      offset
+      docId
+    }
+    heading
+    order
+    checked
+    due
+    priority
+    completedAt
+  }
+}`,
+};
+
 export const setWorkspacePublicByIdMutation = {
   id: 'setWorkspacePublicByIdMutation' as const,
   op: 'setWorkspacePublicById',
@@ -3058,6 +3085,34 @@ export const getWorkspaceRolePermissionsQuery = {
   }
 }`,
   deprecations: ["'workspaceRolePermissions' is deprecated: use WorkspaceType[permissions] instead"],
+};
+
+export const workspaceTasksQuery = {
+  id: 'workspaceTasksQuery' as const,
+  op: 'workspaceTasks',
+  query: `query workspaceTasks($workspaceId: String!, $knownEtag: String) {
+  workspace(id: $workspaceId) {
+    tasks(knownEtag: $knownEtag) {
+      etag
+      ready
+      tasks {
+        docId
+        blockId
+        text
+        refs {
+          offset
+          docId
+        }
+        heading
+        order
+        checked
+        due
+        priority
+        completedAt
+      }
+    }
+  }
+}`,
 };
 
 export const approveWorkspaceTeamMemberMutation = {

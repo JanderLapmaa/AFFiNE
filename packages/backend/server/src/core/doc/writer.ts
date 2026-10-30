@@ -314,7 +314,7 @@ export class DocWriter {
     });
   }
 
-  private async updateDocProperties(
+  async updateDocProperties(
     workspaceId: string,
     docId: string,
     props: { createdBy?: string; updatedBy?: string },

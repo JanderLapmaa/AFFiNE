@@ -1682,6 +1682,9 @@ type Mutation {
   sendVerifyChangeEmail(callbackUrl: String!, email: String!, token: String!): Boolean!
   sendVerifyEmail(callbackUrl: String!): Boolean!
   setBlob(blob: Upload!, workspaceId: String!): String!
+
+  """Tick or untick a todo; returns the updated task"""
+  setTaskChecked(blockId: String!, checked: Boolean!, docId: String!, workspaceId: String!): WorkspaceTask!
   settleTranscriptTask(taskId: String!, workspaceId: String!): TranscriptionResultType
   submitTranscriptTask(blob: Upload, blobId: String!, blobs: [Upload!], input: SubmitAudioTranscriptionInput, workspaceId: String!): TranscriptionResultType
   unlinkCalendarAccount(accountId: String!): Boolean!
@@ -2912,6 +2915,54 @@ type WorkspaceRolePermissions {
   role: Permission!
 }
 
+type WorkspaceTask {
+  blockId: String!
+  checked: Boolean!
+
+  """Epoch milliseconds; only on a checked task"""
+  completedAt: Float
+  docId: String!
+
+  """YYYY-MM-DD"""
+  due: String
+
+  """Closest heading before the todo"""
+  heading: String
+
+  """Position in the doc, in document order"""
+  order: Int!
+  priority: Int
+
+  """Linked docs in the text, in text order"""
+  refs: [WorkspaceTaskRef!]!
+
+  """Text of the todo; a linked doc is a space"""
+  text: String!
+}
+
+type WorkspaceTaskRef {
+  """Id of the linked doc"""
+  docId: String!
+
+  """UTF-16 offset of the reference placeholder in the text"""
+  offset: Int!
+}
+
+type WorkspaceTasks {
+  """
+  Opaque. Changes when a task changes or when the docs the user can read change
+  """
+  etag: String!
+
+  """
+  False while the workspace is still being extracted; the list may be incomplete
+  """
+  ready: Boolean!
+
+  """Null when knownEtag equals the current etag"""
+  tasks: [WorkspaceTask!]
+}
+
 type WorkspaceType {
   """Search a specific table with aggregate"""
   aggregate(input: AggregateInput!): AggregateResultObjectType!
@@ -3004,6 +3055,12 @@ type WorkspaceType {
 
   """The team subscription of the workspace, if exists."""
   subscription: SubscriptionType
+
+  """The todo list blocks of the docs the user can read, in doc order"""
+  tasks(
+    """Skip the list when it is still at this etag"""
+    knownEtag: String
+  ): WorkspaceTasks!
 
   """if workspace is team workspace"""
   team: Boolean!

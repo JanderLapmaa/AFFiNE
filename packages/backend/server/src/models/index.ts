@@ -44,6 +44,7 @@ import { UserSettingsModel } from './user-settings';
 import { WorkspaceModel } from './workspace';
 import { WorkspaceAnalyticsModel } from './workspace-analytics';
 import { WorkspaceCalendarModel } from './workspace-calendar';
+import { WorkspaceTaskModel } from './workspace-task';
 import { WorkspaceUserModel } from './workspace-user';
 
 const MODELS = {
@@ -82,6 +83,7 @@ const MODELS = {
   calendarEventInstance: CalendarEventInstanceModel,
   workspaceCalendar: WorkspaceCalendarModel,
   workspaceAnalytics: WorkspaceAnalyticsModel,
+  workspaceTask: WorkspaceTaskModel,
 };
 
 type ModelsType = {
@@ -161,5 +163,6 @@ export * from './user-settings';
 export * from './workspace';
 export * from './workspace-analytics';
 export * from './workspace-calendar';
+export * from './workspace-task';
 export * from './workspace-user';
 export type { WorkspaceUserCompat } from './workspace-user-compat';

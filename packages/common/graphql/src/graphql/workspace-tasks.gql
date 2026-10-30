@@ -1,0 +1,23 @@
+query workspaceTasks($workspaceId: String!, $knownEtag: String) {
+  workspace(id: $workspaceId) {
+    tasks(knownEtag: $knownEtag) {
+      etag
+      ready
+      tasks {
+        docId
+        blockId
+        text
+        refs {
+          offset
+          docId
+        }
+        heading
+        order
+        checked
+        due
+        priority
+        completedAt
+      }
+    }
+  }
+}

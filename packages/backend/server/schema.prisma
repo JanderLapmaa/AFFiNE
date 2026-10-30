@@ -213,6 +213,8 @@ model Workspace {
   docGrants                  DocGrant[]
   mcpCredentials             McpCredential[]
   artifacts                  WorkspaceArtifact[]
+  tasks                      WorkspaceTask[]
+  taskState                  WorkspaceTaskState?
 
   @@index([lastCheckEmbeddings])
   @@index([createdAt])
@@ -1534,4 +1536,46 @@ model CalendarEventInstance {
   @@unique([calendarEventId, recurrenceId])
   @@index([calendarEventId, startAtUtc])
   @@map("calendar_event_instances")
+}
+
+// Task rows derived from the todo list blocks of workspace docs (the docs stay
+// the source of truth). Written by the server task extractor.
+model WorkspaceTask {
+  workspaceId String   @map("workspace_id") @db.VarChar
+  docId       String   @map("doc_id") @db.VarChar
+  blockId     String   @map("block_id") @db.VarChar
+  text        String   @db.Text
+  // [UTF-16 offset in text, linked doc id][]
+  refs        Json     @default("[]") @db.JsonB
+  heading     String?  @db.Text
+  // position among the blocks of the doc, in document order
+  order       Int
+  checked     Boolean  @default(false)
+  // YYYY-MM-DD
+  due         String?  @db.VarChar(10)
+  priority    Int?     @db.SmallInt
+  // epoch milliseconds
+  completedAt BigInt?  @map("completed_at")
+  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, docId, blockId])
+  @@index([workspaceId])
+  @@map("workspace_tasks")
+}
+
+// Per-workspace state of the task list.
+model WorkspaceTaskState {
+  workspaceId      String    @id @map("workspace_id") @db.VarChar
+  // version of the extractor that produced the rows; a lower value than the
+  // server's triggers a backfill
+  extractorVersion Int       @default(0) @map("extractor_version")
+  // bumped whenever any row of the workspace changes (including deletes)
+  revision         BigInt    @default(0)
+  backfilledAt     DateTime? @map("backfilled_at") @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("workspace_task_states")
 }

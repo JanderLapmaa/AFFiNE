@@ -1858,6 +1858,8 @@ export interface Mutation {
   sendVerifyChangeEmail: Scalars['Boolean']['output'];
   sendVerifyEmail: Scalars['Boolean']['output'];
   setBlob: Scalars['String']['output'];
+  /** Tick or untick a todo; returns the updated task */
+  setTaskChecked: WorkspaceTask;
   settleTranscriptTask: Maybe<TranscriptionResultType>;
   submitTranscriptTask: Maybe<TranscriptionResultType>;
   unlinkCalendarAccount: Scalars['Boolean']['output'];
@@ -2253,6 +2255,13 @@ export interface MutationSendVerifyEmailArgs {
 
 export interface MutationSetBlobArgs {
   blob: Scalars['Upload']['input'];
+  workspaceId: Scalars['String']['input'];
+}
+
+export interface MutationSetTaskCheckedArgs {
+  blockId: Scalars['String']['input'];
+  checked: Scalars['Boolean']['input'];
+  docId: Scalars['String']['input'];
   workspaceId: Scalars['String']['input'];
 }
 
@@ -3647,6 +3656,44 @@ export interface WorkspaceRolePermissions {
   role: Permission;
 }
 
+export interface WorkspaceTask {
+  __typename?: 'WorkspaceTask';
+  blockId: Scalars['String']['output'];
+  checked: Scalars['Boolean']['output'];
+  /** Epoch milliseconds; only on a checked task */
+  completedAt: Maybe<Scalars['Float']['output']>;
+  docId: Scalars['String']['output'];
+  /** YYYY-MM-DD */
+  due: Maybe<Scalars['String']['output']>;
+  /** Closest heading before the todo */
+  heading: Maybe<Scalars['String']['output']>;
+  /** Position in the doc, in document order */
+  order: Scalars['Int']['output'];
+  priority: Maybe<Scalars['Int']['output']>;
+  /** Linked docs in the text, in text order */
+  refs: Array<WorkspaceTaskRef>;
+  /** Text of the todo; a linked doc is a space */
+  text: Scalars['String']['output'];
+}
+
+export interface WorkspaceTaskRef {
+  __typename?: 'WorkspaceTaskRef';
+  /** Id of the linked doc */
+  docId: Scalars['String']['output'];
+  /** UTF-16 offset of the reference placeholder in the text */
+  offset: Scalars['Int']['output'];
+}
+
+export interface WorkspaceTasks {
+  __typename?: 'WorkspaceTasks';
+  /** Opaque. Changes when a task changes or when the docs the user can read change */
+  etag: Scalars['String']['output'];
+  /** False while the workspace is still being extracted; the list may be incomplete */
+  ready: Scalars['Boolean']['output'];
+  /** Null when knownEtag equals the current etag */
+  tasks: Maybe<Array<WorkspaceTask>>;
+}
+
 export interface WorkspaceType {
   __typename?: 'WorkspaceType';
   /** Search a specific table with aggregate */
@@ -3716,6 +3763,8 @@ export interface WorkspaceType {
   searchDocs: Array<SearchDocObjectType>;
   /** The team subscription of the workspace, if exists. */
   subscription: Maybe<SubscriptionType>;
+  /** The todo list blocks of the docs the user can read, in doc order */
+  tasks: WorkspaceTasks;
   /** if workspace is team workspace */
   team: Scalars['Boolean']['output'];
 }
@@ -3789,6 +3838,10 @@ export interface WorkspaceTypeSearchArgs {
 
 export interface WorkspaceTypeSearchDocsArgs {
   input: SearchDocsInput;
+}
+
+export interface WorkspaceTypeTasksArgs {
+  knownEtag?: InputMaybe<Scalars['String']['input']>;
 }
 
 export interface WorkspaceUserType {
@@ -7153,6 +7206,34 @@ export type ServerConfigQuery = {
   };
 };
 
+export type SetTaskCheckedMutationVariables = Exact<{
+  workspaceId: Scalars['String']['input'];
+  docId: Scalars['String']['input'];
+  blockId: Scalars['String']['input'];
+  checked: Scalars['Boolean']['input'];
+}>;
+
+export type SetTaskCheckedMutation = {
+  __typename?: 'Mutation';
+  setTaskChecked: {
+    __typename?: 'WorkspaceTask';
+    docId: string;
+    blockId: string;
+    text: string;
+    heading: string | null;
+    order: number;
+    checked: boolean;
+    due: string | null;
+    priority: number | null;
+    completedAt: number | null;
+    refs: Array<{
+      __typename?: 'WorkspaceTaskRef';
+      offset: number;
+      docId: string;
+    }>;
+  };
+};
+
 export type SetWorkspacePublicByIdMutationVariables = Exact<{
   id: Scalars['ID']['input'];
   public: Scalars['Boolean']['input'];
@@ -7717,6 +7798,40 @@ export type GetWorkspaceRolePermissionsQuery = {
   };
 };
 
+export type WorkspaceTasksQueryVariables = Exact<{
+  workspaceId: Scalars['String']['input'];
+  knownEtag?: InputMaybe<Scalars['String']['input']>;
+}>;
+
+export type WorkspaceTasksQuery = {
+  __typename?: 'Query';
+  workspace: {
+    __typename?: 'WorkspaceType';
+    tasks: {
+      __typename?: 'WorkspaceTasks';
+      etag: string;
+      ready: boolean;
+      tasks: Array<{
+        __typename?: 'WorkspaceTask';
+        docId: string;
+        blockId: string;
+        text: string;
+        heading: string | null;
+        order: number;
+        checked: boolean;
+        due: string | null;
+        priority: number | null;
+        completedAt: number | null;
+        refs: Array<{
+          __typename?: 'WorkspaceTaskRef';
+          offset: number;
+          docId: string;
+        }>;
+      }> | null;
+    };
+  };
+};
+
 export type ApproveWorkspaceTeamMemberMutationVariables = Exact<{
   workspaceId: Scalars['String']['input'];
   userId: Scalars['String']['input'];
@@ -8108,6 +8223,11 @@ export type Queries =
       name: 'getWorkspaceRolePermissionsQuery';
       variables: GetWorkspaceRolePermissionsQueryVariables;
       response: GetWorkspaceRolePermissionsQuery;
+    }
+  | {
+      name: 'workspaceTasksQuery';
+      variables: WorkspaceTasksQueryVariables;
+      response: WorkspaceTasksQuery;
     };
 
 export type Mutations =
@@ -8505,6 +8625,11 @@ export type Mutations =
       name: 'sendVerifyEmailMutation';
       variables: SendVerifyEmailMutationVariables;
       response: SendVerifyEmailMutation;
+    }
+  | {
+      name: 'setTaskCheckedMutation';
+      variables: SetTaskCheckedMutationVariables;
+      response: SetTaskCheckedMutation;
     }
   | {
       name: 'setWorkspacePublicByIdMutation';

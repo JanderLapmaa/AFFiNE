@@ -922,6 +922,7 @@ __metadata:
     "@affine-tools/cli": "workspace:*"
     "@affine-tools/utils": "workspace:*"
     "@affine/graphql": "workspace:*"
+    "@affine/reader": "workspace:*"
     "@affine/realtime": "workspace:*"
     "@affine/s3-compat": "workspace:*"
     "@affine/server-native": "workspace:*"

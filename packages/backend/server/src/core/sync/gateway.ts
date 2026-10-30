@@ -201,6 +201,15 @@ interface SyncDocUpdatesPayload {
 
 declare global {
   interface Events {
+    // a client pushed updates over the socket (`doc.updates.pushed` covers
+    // the server-side writers); local to the instance that took the push
+    'doc.updates.received': {
+      spaceType: SpaceType;
+      spaceId: string;
+      docId: string;
+      timestamp: number;
+      editor?: string;
+    };
     'sync.doc.updates.pushed': {
       spaceType: SpaceType;
       spaceId: string;
@@ -1074,6 +1083,15 @@ export class SpaceSyncGateway
     }
 
     this.emitActiveDocUpdate(payload, sourceSocket?.id, broadcastPayload);
+    if (sourceSocket) {
+      this.event.emit('doc.updates.received', {
+        spaceType: payload.spaceType,
+        spaceId: payload.spaceId,
+        docId: payload.docId,
+        timestamp: payload.timestamp,
+        editor: payload.editor,
+      });
+    }
     metrics.socketio
       .counter('doc_updates_broadcast')
       .add(broadcastPayload.updates.length, {

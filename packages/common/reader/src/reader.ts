@@ -27,6 +27,11 @@ import {
 } from 'yjs';
 
 import { getStoreManager } from './bs-store';
+import {
+  collectTodoHeadings,
+  readTaskFields,
+  referencedDocId,
+} from './task-fields';
 
 const blocksuiteSchema = new Schema();
 blocksuiteSchema.register([...AffineSchemas]);
@@ -67,9 +72,6 @@ const bookmarkFlavours = new Set([
   'affine:embed-github',
   'affine:embed-loom',
 ]);
-
-const referencedDocId = (delta: DeltaInsert<AffineTextAttributes>) =>
-  delta.attributes?.reference?.pageId;
 
 const collectInlineReferences = (
   deltas: DeltaInsert<AffineTextAttributes>[]
@@ -517,126 +519,6 @@ function unindentMarkdown(markdown: string) {
   }
 
   return res.join('\n');
-}
-
-const DUE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const HEADING_TYPES = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
-
-/**
- * Pre-order walk from the page block over `sys:children`; maps each todo list
- * block id to the trimmed text of the last heading visited before it (may be
- * empty) and its 0-based position among all blocks visited in the walk. Kept
- * independent of the reader's own traversal order.
- */
-function collectTodoHeadings(
-  blocks: YMap<YMap<any>>
-): Map<string, { heading: string; order: number }> {
-  const result = new Map<string, { heading: string; order: number }>();
-  // several pages: the walk starts from the lowest sys:id (string order),
-  // independent of the page the reader itself treats as root
-  let pageId: string | null = null;
-  for (const block of blocks.values()) {
-    const id = block.get('sys:id')?.toString();
-    if (
-      block.get('sys:flavour')?.toString() === 'affine:page' &&
-      id &&
-      (pageId === null || id < pageId)
-    ) {
-      pageId = id;
-    }
-  }
-  const visited = new Set<string>();
-  const stack = pageId ? [pageId] : [];
-  let heading = '';
-  let position = 0;
-  while (stack.length) {
-    const id = stack.pop() as string;
-    if (visited.has(id)) continue;
-    visited.add(id);
-    const block = blocks.get(id);
-    if (!block) continue;
-    const order = position++;
-    const flavour = block.get('sys:flavour')?.toString();
-    if (
-      flavour === 'affine:paragraph' &&
-      HEADING_TYPES.has(block.get('prop:type'))
-    ) {
-      heading = (block.get('prop:text')?.toString() ?? '').trim();
-    } else if (flavour === 'affine:list' && block.get('prop:type') === 'todo') {
-      result.set(id, { heading, order });
-    }
-    const children = block.get('sys:children');
-    if (children instanceof YArray) {
-      for (let i = children.length - 1; i >= 0; i--) {
-        stack.push(children.get(i));
-      }
-    }
-  }
-  return result;
-}
-
-/**
- * Linked-doc references in a todo's text as `[offset, docId]`, with the UTF-16
- * offset of the reference's placeholder in the text. Embeds are not part of
- * `Y.Text#toString()` (the indexed `content`), so they count as 0 units.
- */
-function readTaskRefs(text: unknown): [number, string][] {
-  if (!(text instanceof YText)) return [];
-  const refs: [number, string][] = [];
-  let offset = 0;
-  for (const delta of text.toDelta() as DeltaInsert<AffineTextAttributes>[]) {
-    const pageId = referencedDocId(delta);
-    if (pageId) refs.push([offset, pageId]);
-    if (typeof delta.insert === 'string') offset += delta.insert.length;
-  }
-  return refs;
-}
-
-function readTaskFields(
-  block: YMap<any>,
-  walk: { heading: string; order: number } | undefined
-): NonNullable<BlockDocumentInfo['additional']> {
-  const due = block.get('prop:due');
-  const priority = block.get('prop:priority');
-  const completedAt = block.get('prop:completedAt');
-  const refs = readTaskRefs(block.get('prop:text'));
-  return {
-    listType: 'todo',
-    checked: block.get('prop:checked') === true,
-    ...(typeof due === 'string' && DUE_PATTERN.test(due) ? { due } : {}),
-    ...(priority === 1 || priority === 2 || priority === 3 ? { priority } : {}),
-    ...(typeof completedAt === 'number' && Number.isFinite(completedAt)
-      ? { completedAt }
-      : {}),
-    ...(walk?.heading ? { heading: walk.heading } : {}),
-    ...(walk ? { order: walk.order } : {}),
-    ...(refs.length ? { refs } : {}),
-  };
-}
-
-/**
- * The todo list blocks of a doc with the same `content` and task fields
- * `readAllBlocksFromDoc` indexes, without the rest of the crawl. For reading
- * an open doc's tasks live.
- */
-export function readTodoBlocks(ydoc: YDoc): {
-  blockId: string;
-  content: string;
-  additional: NonNullable<BlockDocumentInfo['additional']>;
-}[] {
-  const blocks = ydoc.getMap<any>('blocks');
-  const result = [];
-  for (const [blockId, walk] of collectTodoHeadings(blocks)) {
-    const block = blocks.get(blockId);
-    const text = block?.get('prop:text');
-    if (!block || !(text instanceof YText)) continue;
-    result.push({
-      blockId,
-      content: text.toString(),
-      additional: readTaskFields(block, walk),
-    });
-  }
-  return result;
 }
 
 export async function readAllBlocksFromDoc({
@@ -1144,3 +1026,4 @@ export function readAllDocIdsFromRootDoc(
 }
 
 export { parseBlock, parseBlockToMd, parsePageDoc } from './doc-parser/parser';
+export { readTodoBlocks } from './task-fields';
