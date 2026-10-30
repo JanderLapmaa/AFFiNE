@@ -170,6 +170,40 @@ Confirmed by the user while building:
 - **Empty todos and doc links (2026-10-29):** a todo with blank text and no doc reference is not a task (left out of rows and counts by the projection). A linked-doc reference in a todo's text is a `' '` placeholder, so both extractors record `refs: [offset, docId][]` (UTF-16 offsets) and the row title shows the linked doc's current title there (a journal doc shows its date).
 - **Index schema:** unchanged; the service queries `flavour: affine:list` and keeps `additional.listType === 'todo'` rows client-side (see [indexer.md](indexer.md)).
 
+- **Server task list for cloud workspaces (2026-10-30).** Supersedes "server-side indexing or API changes" in Out of Scope.
+  - **Why:** with two clients on one cloud workspace, the view only knew the todos in docs a device had downloaded. In testing, the sync socket reset every 20-60 s, and each reset restarted the full doc sync, so a phone never finished it. Ticks made on desktop did not reach the phone, and rows flickered. The Tasks view must not depend on which docs a device has downloaded.
+  - **Server:**
+    - **Table and extractor:** one task table (workspace, doc, block, text, refs, checked, due, priority, completedAt, updatedAt, plus a per-workspace extractor version), derived from the docs. Docs stay the only source of truth. An extractor runs on `doc.updates.pushed` (debounced per doc), loads the merged doc with `storage.getDoc`, runs the shared task extractor and replaces that doc's rows in one transaction.
+    - **Backfill:** a job extracts every doc on the first query or when the extractor version is bumped.
+    - **Query:** `tasks(workspaceId)` returns the whole list, filtered by doc read permission, with an "unchanged" signal.
+    - **Tick:** `setTaskChecked` writes a minimal Yjs delta (`checked` + `completedAt`) through `pushDocUpdates`, the same way `updateDoc` does (needs Doc.Update).
+    - The migration only adds.
+  - **Client:**
+    - A task source interface, with one view code path. Cloud workspaces use the server list over plain HTTP GraphQL (no realtime topic). Local workspaces keep the indexer path.
+    - The cloud source renders the cached list first and refreshes on open, on foreground, after its own writes, on network-online and every 15 s while visible. It never clears the list while loading.
+    - Optimistic ticks last until the list shows them, or 30 s at most. A failed write shows an error on the row.
+    - The open-doc live override is removed from the cloud path.
+  - **Rejected:**
+    - **The server search index:** it lacks the task fields and needs Manticore or Elasticsearch, which the standard self-host compose doesn't include.
+    - **A realtime delta ledger:** it depends on the unreliable socket.
+  - **Spike results** (local Postgres 16, Windows dev machine; throwaway specs, not committed):
+    - **`getDoc` sees a push at once.** It merges the snapshot with every pending update under the doc lock. A push that lands while a `getDoc` is in flight is seen by that `getDoc` or the next one; it was never lost.
+    - **Timings:**
+
+      | Step                                     | p50      | p95   | max   |
+      | ---------------------------------------- | -------- | ----- | ----- |
+      | `getDoc`                                 | 10 ms    | 12 ms | 29 ms |
+      | `getDoc` with 200 pending updates        | 53 ms    |       |       |
+      | Task extraction                          | < 0.5 ms |       |       |
+      | Push to extracted rows (in-test emitter) | 10 ms    | 17 ms |       |
+
+      So a ~2 s debounce is set by batching typing, not by read latency.
+
+    - **Server tick delta:** 46 bytes. A client that made concurrent edits (typing in the same block, ticking another) converged byte for byte with the server. So did a replica fed the updates out of order. Applying the delta twice created no duplicates.
+    - **Concurrent tick and untick of the same block:** the Yjs client id decides `checked`, and `completedAt` can survive on an unchecked task. The existing rule ("a stale `completedAt` on an unchecked task is ignored") covers it, so the server extractor must apply the same rule.
+    - **Server import of `@affine/reader`:** a relative import failed under the server's ava loader ("Invalid or unexpected token"). Phase 1 has to make the extractor importable from the server, for example by moving the task-field code into a module that only depends on `yjs` and adding the server dependency, so that the server, the JS reader and Rust `task_fields.rs` can't drift apart.
+    - **Not proven by the spike:** that blocksuite's open editor re-renders the remote `checked` change. That is the normal collaboration path, but it gets checked in the phase 3 hand-test.
+
 ## Testing Decisions
 
 - A good test drives a module through its public interface and asserts on what a user would see or what ends up in the doc. It should not depend on how the module is built internally. Tests use fixed clocks, and they build Yjs docs in the test rather than relying on large binary fixtures where possible.
@@ -186,7 +220,7 @@ Confirmed by the user while building:
 - Swipe actions on mobile.
 - Recurring tasks, subtasks, tags/lists/projects, assignees.
 - iOS-specific work (the shared mobile UI may work there, but it isn't a target).
-- Server-side indexing or API changes.
+- Server-side indexing or API changes (superseded for cloud workspaces by the server task list; see "Decisions made during implementation").
 - Syncing with TickTick or other external task tools.
 
 ## Further Notes
