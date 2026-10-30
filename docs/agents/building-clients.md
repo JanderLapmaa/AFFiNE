@@ -129,6 +129,60 @@ changes reach a self-hosted server only through an image built from this fork,
 used in place of `ghcr.io/toeverything/affine:stable` in
 `.docker/selfhost/compose.yml`. Server dev setup: `docs/developing-server.md`.
 
+### Building the server image locally (Podman, linux/amd64)
+
+About 15 minutes cold, most of it the Rust build of `server-native`. The
+frontend bundles are plain JS and are built on Windows. Everything that
+compiles or installs native modules runs inside the container
+(`scripts/fork/server-image.Containerfile`).
+
+```sh
+# from Git Bash; MSYS2_ENV_CONV_EXCL='*' as for the Android build
+for p in web admin mobile; do BUILD_TYPE=stable yarn affine @affine/$p build; done
+mkdir <ctx> && git archive HEAD | tar -x -C <ctx>
+# copy packages/frontend/apps/web/dist, admin/dist, apps/mobile/dist into the same paths under <ctx>
+podman run --rm --entrypoint node ghcr.io/toeverything/affine:stable -e '
+  const b = require("fs").readFileSync("dist/server-native.x64.node", "latin1");
+  const s = b.indexOf("-----BEGIN PUBLIC KEY-----"), e = "-----END PUBLIC KEY-----";
+  process.stdout.write(b.slice(s, b.indexOf(e, s) + e.length));' > pro-public-key.pem
+podman build --build-arg AFFINE_PRO_PUBLIC_KEY="$(cat pro-public-key.pem)" \
+  -f scripts/fork/server-image.Containerfile -t affine-fork:<tag> <ctx>
+```
+
+A self-hosted server refuses to start ("AFFINE_PRO_PUBLIC_KEY must be
+embedded in self-hosted server-native builds") unless the AFFiNE Pro license
+public key is compiled into `server-native`. Upstream CI injects it from a
+secret. The command above copies it from the upstream image, so license
+checks behave as they do on an official server. The debug key in
+`native/src/lib.rs` is only compiled into debug builds, and it doesn't
+validate official licenses.
+
+`git archive` keeps the Windows `node_modules`, `target` and the Windows
+`server-native.node` out of the context. Any change to the context (the
+Containerfile included) invalidates the `COPY . .` layer and rebuilds the
+Rust crate.
+
+Gotchas:
+
+- `affine bundle` exits 0 even when rspack reports errors, so the
+  Containerfile checks that `dist/main.js` exists. The bundle needs all three
+  arch files that `packages/backend/native/index.js` requires; the
+  Containerfile copies the x64 build to the other two names (only x64 is ever
+  loaded on amd64).
+- The bundle inlines only the workspace packages listed for `@affine/server`
+  in `tools/utils/src/workspace.gen.ts`. After adding a workspace dependency
+  to the server, run `yarn affine init` and commit the regenerated file.
+  Otherwise the image fails at startup with `ERR_MODULE_NOT_FOUND`, while
+  `yarn affine @affine/server dev` (run from source) works fine.
+- Smoke test: on a Podman network with throwaway `pgvector/pgvector:pg16` and
+  `redis` containers, run the image with
+  `node ./scripts/self-host-predeploy.js` (migrations plus data migrations,
+  as the self-host compose does), then start it and request `/info` and
+  `/graphql`.
+
+To get the image onto the server, push it to a registry the server can pull
+from, or `podman save` it and `docker load` it there.
+
 ## Native (Rust) on Windows
 
 - The toolchain is pinned in `rust-toolchain.toml`; rustup installs it on
@@ -171,8 +225,10 @@ install. Without it the app packs fine but fails at launch with an error
 dialog `Cannot find module 'electron-updater'`, **while the process stays
 alive**, so a liveness check alone is not a valid smoke test.
 
-Without the reinstall, build the folder by hand (gitignored, nothing in the
-root `node_modules` changes):
+Without the reinstall, build the folder with
+`node scripts/fork/stage-electron-node-modules.mjs <dir outside the repo>`
+(gitignored, nothing in the root `node_modules` changes). It does the
+following:
 
 - Copy (dereferenced) the transitive closure of the electron `dependencies`
   plus `semver` from the root `node_modules`.
@@ -183,6 +239,10 @@ root `node_modules` changes):
   `scripts/make-env.ts`); give every other devDependency (workspace packages,
   esbuild, vitest, ...) a stub dir containing only a `package.json`.
   Forge prunes devDependencies from the asar.
+- Forge's walker also follows packages nested in a package's own
+  `node_modules` (e.g. `@electron/asar/node_modules/glob`), so their
+  dependencies have to be in the closure too. Otherwise it fails with
+  `Failed to locate module "fs.realpath"`.
 - A junction/symlink to the root `node_modules` does not work:
   packager re-creates it as a symlink and fails with `EPERM`.
 
@@ -199,6 +259,11 @@ Gotchas:
   top-level windows (one `AFFiNE-canary` window and no dialog is healthy),
   read `<temp dir>/logs/main.log`, then kill it. A canary build checks the
   upstream GitHub releases for updates; that 404 in `main.log` is expected.
+- The updater downloads the **upstream** canary release into
+  `<user data>/pending`. It doesn't install it on quit
+  (`autoInstallOnAppQuit = false`), but accepting the in-app update prompt
+  would install the upstream app, without the fork's changes. Turn off
+  automatic update checks in the app's settings.
 - Rebuilds: the stub `apps/electron/node_modules` shadows `esbuild` and breaks
   `generate-assets` (`Cannot find package '.../node_modules/esbuild/index.js'`).
   It also breaks `vitest` (stub `rxjs` etc. resolve for electron specs). Keep
