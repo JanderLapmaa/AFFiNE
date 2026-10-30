@@ -1682,9 +1682,6 @@ type Mutation {
   sendVerifyChangeEmail(callbackUrl: String!, email: String!, token: String!): Boolean!
   sendVerifyEmail(callbackUrl: String!): Boolean!
   setBlob(blob: Upload!, workspaceId: String!): String!
-
-  """Tick or untick a todo; returns the updated task"""
-  setTaskChecked(blockId: String!, checked: Boolean!, docId: String!, workspaceId: String!): WorkspaceTask!
   settleTranscriptTask(taskId: String!, workspaceId: String!): TranscriptionResultType
   submitTranscriptTask(blob: Upload, blobId: String!, blobs: [Upload!], input: SubmitAudioTranscriptionInput, workspaceId: String!): TranscriptionResultType
   unlinkCalendarAccount(accountId: String!): Boolean!
@@ -1708,6 +1705,9 @@ type Mutation {
   """Update user settings"""
   updateSettings(input: UpdateUserSettingsInput!): Boolean!
   updateSubscriptionRecurring(idempotencyKey: String @deprecated(reason: "use header `Idempotency-Key`"), plan: SubscriptionPlan = Pro, recurring: SubscriptionRecurring!, workspaceId: String): SubscriptionType!
+
+  """Change a todo (checked, due, priority); returns the updated task"""
+  updateTask(blockId: String!, docId: String!, input: UpdateTaskInput!, workspaceId: String!): WorkspaceTask!
 
   """Update an user"""
   updateUser(id: String!, input: ManageUserInput!): UserType!
@@ -2526,6 +2526,17 @@ input UpdateDocUserRoleInput {
   role: DocRole!
   userId: String!
   workspaceId: String!
+}
+
+input UpdateTaskInput {
+  """Omit for no change"""
+  checked: Boolean
+
+  """YYYY-MM-DD. Omit for no change, null to clear"""
+  due: String
+
+  """1 to 3. Omit for no change, null or 0 to clear"""
+  priority: Int
 }
 
 input UpdateUserInput {

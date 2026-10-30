@@ -12,7 +12,11 @@ import { PermissionAccess } from '../permission';
 import { UserType } from '../user';
 import { WorkspaceType } from '../workspaces';
 import { TaskService } from './service';
-import { WorkspaceTaskObjectType, WorkspaceTasksObjectType } from './types';
+import {
+  UpdateTaskInput,
+  WorkspaceTaskObjectType,
+  WorkspaceTasksObjectType,
+} from './types';
 
 function toObject(row: WorkspaceTaskRow): WorkspaceTaskObjectType {
   return {
@@ -48,26 +52,27 @@ export class TaskResolver {
   }
 
   @Mutation(() => WorkspaceTaskObjectType, {
-    description: 'Tick or untick a todo; returns the updated task',
+    description:
+      'Change a todo (checked, due, priority); returns the updated task',
   })
-  async setTaskChecked(
+  async updateTask(
     @CurrentUser() me: UserType,
     @Args('workspaceId') workspaceId: string,
     @Args('docId') docId: string,
     @Args('blockId') blockId: string,
-    @Args('checked') checked: boolean
+    @Args('input') input: UpdateTaskInput
   ): Promise<WorkspaceTaskObjectType> {
     await this.ac
       .user(me.id)
       .workspace(workspaceId)
       .doc(docId)
       .assert('Doc.Update');
-    const row = await this.service.setChecked(
+    const row = await this.service.update(
       me.id,
       workspaceId,
       docId,
       blockId,
-      checked
+      input
     );
     return toObject(row);
   }

@@ -7,7 +7,12 @@ import { applyUpdate, Doc, encodeStateAsUpdate, Map as YMap } from 'yjs';
 
 import { createModule } from '../../../__tests__/create-module';
 import { Mockers } from '../../../__tests__/mocks';
-import { DocActionDenied, DocNotFound, NotFound } from '../../../base';
+import {
+  BadRequest,
+  DocActionDenied,
+  DocNotFound,
+  NotFound,
+} from '../../../base';
 import { DocRole, Models, WorkspaceRole } from '../../../models';
 import { PgWorkspaceDocStorageAdapter } from '../../doc';
 import { TASK_EXTRACTOR_VERSION, TaskExtractor } from '../extractor';
@@ -276,7 +281,7 @@ test('an unchanged etag returns no tasks', async t => {
   t.is(changed.tasks!.length, 1);
 });
 
-test('setTaskChecked ticks and unticks the doc and the row', async t => {
+test('updateTask ticks and unticks the doc and the row', async t => {
   const ws = await createWorkspace();
   await putDoc(
     ws.id,
@@ -290,12 +295,12 @@ test('setTaskChecked ticks and unticks the doc and the row', async t => {
   await extractor.backfillSettled(ws.id);
   const before = await service.list(owner.id, ws.id);
 
-  const ticked = await resolver.setTaskChecked(
+  const ticked = await resolver.updateTask(
     owner as never,
     ws.id,
     'doc-1',
     'a',
-    true
+    { checked: true }
   );
   t.true(ticked!.checked);
   t.is(typeof ticked!.completedAt, 'number');
@@ -322,12 +327,12 @@ test('setTaskChecked ticks and unticks the doc and the row', async t => {
   const event = pushes.find(p => p.docId === 'doc-1');
   t.is(event?.editor, owner.id);
 
-  const unticked = await resolver.setTaskChecked(
+  const unticked = await resolver.updateTask(
     owner as never,
     ws.id,
     'doc-1',
     'a',
-    false
+    { checked: false }
   );
   t.false(unticked!.checked);
   t.is(unticked!.completedAt, null);
@@ -339,7 +344,7 @@ test('setTaskChecked ticks and unticks the doc and the row', async t => {
   t.true(encodeStateAsUpdate(doc2).byteLength > 0);
 });
 
-test('setTaskChecked rejects blocks the list does not show', async t => {
+test('updateTask rejects blocks the list does not show', async t => {
   const ws = await createWorkspace();
   await putDoc(
     ws.id,
@@ -351,15 +356,21 @@ test('setTaskChecked rejects blocks the list does not show', async t => {
   );
   const before = await storage.getDoc(ws.id, 'doc-1');
   await t.throwsAsync(
-    resolver.setTaskChecked(owner as never, ws.id, 'doc-1', 'blank', true),
+    resolver.updateTask(owner as never, ws.id, 'doc-1', 'blank', {
+      checked: true,
+    }),
     { instanceOf: NotFound }
   );
   await t.throwsAsync(
-    resolver.setTaskChecked(owner as never, ws.id, 'doc-1', 'note', true),
+    resolver.updateTask(owner as never, ws.id, 'doc-1', 'note', {
+      checked: true,
+    }),
     { instanceOf: NotFound }
   );
   await t.throwsAsync(
-    resolver.setTaskChecked(owner as never, ws.id, 'missing-doc', 'a', true),
+    resolver.updateTask(owner as never, ws.id, 'missing-doc', 'a', {
+      checked: true,
+    }),
     { instanceOf: DocNotFound }
   );
   // nothing was written
@@ -367,7 +378,7 @@ test('setTaskChecked rejects blocks the list does not show', async t => {
   t.deepEqual(Buffer.from(after!.bin), Buffer.from(before!.bin));
 });
 
-test('setTaskChecked is denied without Doc.Update', async t => {
+test('updateTask is denied without Doc.Update', async t => {
   const ws = await createWorkspace();
   const member = await module.create(Mockers.User);
   await module.create(Mockers.WorkspaceUser, {
@@ -383,7 +394,9 @@ test('setTaskChecked is denied without Doc.Update', async t => {
   await putDoc(ws.id, 'read-only', buildDocBin([{ id: 'a', text: 'one' }]));
 
   await t.throwsAsync(
-    resolver.setTaskChecked(member as never, ws.id, 'read-only', 'a', true),
+    resolver.updateTask(member as never, ws.id, 'read-only', 'a', {
+      checked: true,
+    }),
     { instanceOf: DocActionDenied }
   );
   const doc = new Doc();
@@ -520,7 +533,9 @@ test('ticking in an untracked workspace starts tracking through the backfill', a
   await putDoc(ws.id, 'doc-1', buildDocBin([{ id: 'a', text: 'one' }]));
   t.is(await models.workspaceTask.getState(ws.id), null);
 
-  const task = await service.setChecked(owner.id, ws.id, 'doc-1', 'a', true);
+  const task = await service.update(owner.id, ws.id, 'doc-1', 'a', {
+    checked: true,
+  });
   t.true(task.checked);
   await extractor.backfillSettled(ws.id);
   const state = (await models.workspaceTask.getState(ws.id))!;
@@ -545,4 +560,58 @@ test('flush continues after a failing doc', async t => {
   extractor.schedule(ws.id, 'good');
   await extractor.flush();
   t.is((await models.workspaceTask.list(ws.id)).length, 1);
+});
+
+test('updateTask sets and clears due and priority, and rejects bad input', async t => {
+  const ws = await createWorkspace();
+  await putDoc(ws.id, 'doc-1', buildDocBin([{ id: 'a', text: 'one' }]));
+  await service.list(owner.id, ws.id);
+  await extractor.backfillSettled(ws.id);
+
+  const set = await resolver.updateTask(owner as never, ws.id, 'doc-1', 'a', {
+    due: '2026-11-05',
+    priority: 3,
+  });
+  t.is(set.due, '2026-11-05');
+  t.is(set.priority, 3);
+  t.false(set.checked);
+  const row = (await models.workspaceTask.list(ws.id))[0];
+  t.is(row.due, '2026-11-05');
+  t.is(row.priority, 3);
+
+  // no change: nothing is pushed
+  const pushes = () =>
+    module.event.emitAsync
+      .getCalls()
+      .filter(c => c.args[0] === 'doc.updates.pushed').length;
+  const count = pushes();
+  await resolver.updateTask(owner as never, ws.id, 'doc-1', 'a', {
+    due: '2026-11-05',
+  });
+  t.is(pushes(), count);
+
+  const cleared = await resolver.updateTask(
+    owner as never,
+    ws.id,
+    'doc-1',
+    'a',
+    {
+      due: null,
+      priority: 0,
+    }
+  );
+  t.is(cleared.due, null);
+  t.is(cleared.priority, null);
+
+  const before = await storage.getDoc(ws.id, 'doc-1');
+  await t.throwsAsync(
+    resolver.updateTask(owner as never, ws.id, 'doc-1', 'a', { due: 'soon' }),
+    { instanceOf: BadRequest }
+  );
+  await t.throwsAsync(
+    resolver.updateTask(owner as never, ws.id, 'doc-1', 'a', { priority: 9 }),
+    { instanceOf: BadRequest }
+  );
+  const after = await storage.getDoc(ws.id, 'doc-1');
+  t.deepEqual(Buffer.from(after!.bin), Buffer.from(before!.bin));
 });

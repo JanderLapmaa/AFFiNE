@@ -12,6 +12,7 @@ export interface TodoSpec {
   checked?: boolean;
   completedAt?: number;
   due?: string;
+  priority?: number;
   /** a heading paragraph instead of a todo */
   heading?: boolean;
 }
@@ -67,6 +68,7 @@ export function buildDoc(blocks: TodoSpec[]) {
             ? { completedAt: b.completedAt }
             : {}),
           ...(b.due ? { due: b.due } : {}),
+          ...(b.priority ? { priority: b.priority } : {}),
         },
         b.text
       );

@@ -1,14 +1,14 @@
-mutation setTaskChecked(
+mutation updateTask(
   $workspaceId: String!
   $docId: String!
   $blockId: String!
-  $checked: Boolean!
+  $input: UpdateTaskInput!
 ) {
-  setTaskChecked(
+  updateTask(
     workspaceId: $workspaceId
     docId: $docId
     blockId: $blockId
-    checked: $checked
+    input: $input
   ) {
     docId
     blockId

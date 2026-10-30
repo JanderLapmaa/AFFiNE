@@ -1858,8 +1858,6 @@ export interface Mutation {
   sendVerifyChangeEmail: Scalars['Boolean']['output'];
   sendVerifyEmail: Scalars['Boolean']['output'];
   setBlob: Scalars['String']['output'];
-  /** Tick or untick a todo; returns the updated task */
-  setTaskChecked: WorkspaceTask;
   settleTranscriptTask: Maybe<TranscriptionResultType>;
   submitTranscriptTask: Maybe<TranscriptionResultType>;
   unlinkCalendarAccount: Scalars['Boolean']['output'];
@@ -1878,6 +1876,8 @@ export interface Mutation {
   /** Update user settings */
   updateSettings: Scalars['Boolean']['output'];
   updateSubscriptionRecurring: SubscriptionType;
+  /** Change a todo (checked, due, priority); returns the updated task */
+  updateTask: WorkspaceTask;
   /** Update an user */
   updateUser: UserType;
   /** update user enabled feature */
@@ -2258,13 +2258,6 @@ export interface MutationSetBlobArgs {
   workspaceId: Scalars['String']['input'];
 }
 
-export interface MutationSetTaskCheckedArgs {
-  blockId: Scalars['String']['input'];
-  checked: Scalars['Boolean']['input'];
-  docId: Scalars['String']['input'];
-  workspaceId: Scalars['String']['input'];
-}
-
 export interface MutationSettleTranscriptTaskArgs {
   taskId: Scalars['String']['input'];
   workspaceId: Scalars['String']['input'];
@@ -2324,6 +2317,13 @@ export interface MutationUpdateSubscriptionRecurringArgs {
   plan?: InputMaybe<SubscriptionPlan>;
   recurring: SubscriptionRecurring;
   workspaceId?: InputMaybe<Scalars['String']['input']>;
+}
+
+export interface MutationUpdateTaskArgs {
+  blockId: Scalars['String']['input'];
+  docId: Scalars['String']['input'];
+  input: UpdateTaskInput;
+  workspaceId: Scalars['String']['input'];
 }
 
 export interface MutationUpdateUserArgs {
@@ -3233,6 +3233,15 @@ export interface UpdateDocUserRoleInput {
   role: DocRole;
   userId: Scalars['String']['input'];
   workspaceId: Scalars['String']['input'];
+}
+
+export interface UpdateTaskInput {
+  /** Omit for no change */
+  checked?: InputMaybe<Scalars['Boolean']['input']>;
+  /** YYYY-MM-DD. Omit for no change, null to clear */
+  due?: InputMaybe<Scalars['String']['input']>;
+  /** 1 to 3. Omit for no change, null or 0 to clear */
+  priority?: InputMaybe<Scalars['Int']['input']>;
 }
 
 export interface UpdateUserInput {
@@ -7206,34 +7215,6 @@ export type ServerConfigQuery = {
   };
 };
 
-export type SetTaskCheckedMutationVariables = Exact<{
-  workspaceId: Scalars['String']['input'];
-  docId: Scalars['String']['input'];
-  blockId: Scalars['String']['input'];
-  checked: Scalars['Boolean']['input'];
-}>;
-
-export type SetTaskCheckedMutation = {
-  __typename?: 'Mutation';
-  setTaskChecked: {
-    __typename?: 'WorkspaceTask';
-    docId: string;
-    blockId: string;
-    text: string;
-    heading: string | null;
-    order: number;
-    checked: boolean;
-    due: string | null;
-    priority: number | null;
-    completedAt: number | null;
-    refs: Array<{
-      __typename?: 'WorkspaceTaskRef';
-      offset: number;
-      docId: string;
-    }>;
-  };
-};
-
 export type SetWorkspacePublicByIdMutationVariables = Exact<{
   id: Scalars['ID']['input'];
   public: Scalars['Boolean']['input'];
@@ -7338,6 +7319,34 @@ export type UpdateSubscriptionMutation = {
     plan: SubscriptionPlan;
     recurring: SubscriptionRecurring;
     nextBillAt: string | null;
+  };
+};
+
+export type UpdateTaskMutationVariables = Exact<{
+  workspaceId: Scalars['String']['input'];
+  docId: Scalars['String']['input'];
+  blockId: Scalars['String']['input'];
+  input: UpdateTaskInput;
+}>;
+
+export type UpdateTaskMutation = {
+  __typename?: 'Mutation';
+  updateTask: {
+    __typename?: 'WorkspaceTask';
+    docId: string;
+    blockId: string;
+    text: string;
+    heading: string | null;
+    order: number;
+    checked: boolean;
+    due: string | null;
+    priority: number | null;
+    completedAt: number | null;
+    refs: Array<{
+      __typename?: 'WorkspaceTaskRef';
+      offset: number;
+      docId: string;
+    }>;
   };
 };
 
@@ -8627,11 +8636,6 @@ export type Mutations =
       response: SendVerifyEmailMutation;
     }
   | {
-      name: 'setTaskCheckedMutation';
-      variables: SetTaskCheckedMutationVariables;
-      response: SetTaskCheckedMutation;
-    }
-  | {
       name: 'setWorkspacePublicByIdMutation';
       variables: SetWorkspacePublicByIdMutationVariables;
       response: SetWorkspacePublicByIdMutation;
@@ -8660,6 +8664,11 @@ export type Mutations =
       name: 'updateSubscriptionMutation';
       variables: UpdateSubscriptionMutationVariables;
       response: UpdateSubscriptionMutation;
+    }
+  | {
+      name: 'updateTaskMutation';
+      variables: UpdateTaskMutationVariables;
+      response: UpdateTaskMutation;
     }
   | {
       name: 'updateUserProfileMutation';

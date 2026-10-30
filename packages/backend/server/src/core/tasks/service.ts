@@ -8,7 +8,7 @@ import { BadRequest, DocNotFound, EventBus, NotFound } from '../../base';
 import { Models, type WorkspaceTaskRow } from '../../models';
 import { DocWriter, PgWorkspaceDocStorageAdapter } from '../doc';
 import { PermissionAccess } from '../permission';
-import { buildTaskCheckedDelta } from './delta';
+import { buildTaskDelta, type TaskChanges, validateTaskChanges } from './delta';
 import { loadDoc, TASK_EXTRACTOR_VERSION, TaskExtractor } from './extractor';
 
 export interface WorkspaceTasks {
@@ -75,18 +75,19 @@ export class TaskService {
   }
 
   /**
-   * Tick or untick a task by writing the minimal Yjs delta into its doc, then
+   * Change a task (checked, due, priority) by writing the minimal Yjs delta into its doc, then
    * refresh its rows at once instead of waiting for the debounced extractor.
    * The caller has checked `Doc.Update`.
    */
-  async setChecked(
+  async update(
     userId: string,
     workspaceId: string,
     docId: string,
     blockId: string,
-    checked: boolean,
+    changes: TaskChanges,
     now = Date.now()
   ): Promise<WorkspaceTaskRow> {
+    validateTaskChanges(changes);
     const record = await this.storage.getDoc(workspaceId, docId);
     if (!record?.bin?.byteLength) {
       throw new DocNotFound({ spaceId: workspaceId, docId });
@@ -98,7 +99,7 @@ export class TaskService {
     ) {
       throw new NotFound();
     }
-    const result = buildTaskCheckedDelta(record.bin, blockId, checked, now);
+    const result = buildTaskDelta(record.bin, blockId, changes, now);
     if (result.kind === 'not-a-task') {
       throw new BadRequest('The block is not a todo list block.');
     }

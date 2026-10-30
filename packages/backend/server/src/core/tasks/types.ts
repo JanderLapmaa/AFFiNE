@@ -1,4 +1,4 @@
-import { Field, Float, Int, ObjectType } from '@nestjs/graphql';
+import { Field, Float, InputType, Int, ObjectType } from '@nestjs/graphql';
 
 @ObjectType('WorkspaceTaskRef')
 export class WorkspaceTaskRefObjectType {
@@ -71,4 +71,22 @@ export class WorkspaceTasksObjectType {
     description: 'Null when knownEtag equals the current etag',
   })
   tasks!: WorkspaceTaskObjectType[] | null;
+}
+
+@InputType()
+export class UpdateTaskInput {
+  @Field(() => Boolean, { nullable: true, description: 'Omit for no change' })
+  checked?: boolean;
+
+  @Field(() => String, {
+    nullable: true,
+    description: 'YYYY-MM-DD. Omit for no change, null to clear',
+  })
+  due?: string | null;
+
+  @Field(() => Int, {
+    nullable: true,
+    description: '1 to 3. Omit for no change, null or 0 to clear',
+  })
+  priority?: number | null;
 }

@@ -2565,33 +2565,6 @@ ${passwordLimitsFragment}
 ${credentialsRequirementsFragment}`,
 };
 
-export const setTaskCheckedMutation = {
-  id: 'setTaskCheckedMutation' as const,
-  op: 'setTaskChecked',
-  query: `mutation setTaskChecked($workspaceId: String!, $docId: String!, $blockId: String!, $checked: Boolean!) {
-  setTaskChecked(
-    workspaceId: $workspaceId
-    docId: $docId
-    blockId: $blockId
-    checked: $checked
-  ) {
-    docId
-    blockId
-    text
-    refs {
-      offset
-      docId
-    }
-    heading
-    order
-    checked
-    due
-    priority
-    completedAt
-  }
-}`,
-};
-
 export const setWorkspacePublicByIdMutation = {
   id: 'setWorkspacePublicByIdMutation' as const,
   op: 'setWorkspacePublicById',
@@ -2694,6 +2667,33 @@ export const updateSubscriptionMutation = {
   }
 }`,
   deprecations: ["'id' is deprecated: removed"],
+};
+
+export const updateTaskMutation = {
+  id: 'updateTaskMutation' as const,
+  op: 'updateTask',
+  query: `mutation updateTask($workspaceId: String!, $docId: String!, $blockId: String!, $input: UpdateTaskInput!) {
+  updateTask(
+    workspaceId: $workspaceId
+    docId: $docId
+    blockId: $blockId
+    input: $input
+  ) {
+    docId
+    blockId
+    text
+    refs {
+      offset
+      docId
+    }
+    heading
+    order
+    checked
+    due
+    priority
+    completedAt
+  }
+}`,
 };
 
 export const updateUserProfileMutation = {
