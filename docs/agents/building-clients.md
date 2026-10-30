@@ -107,7 +107,19 @@ adb install -r <apk> && adb shell monkey -p app.affine.pro -c android.intent.cat
 - `adb shell input text` drops characters; type through CDP instead.
 - **App restarts:** with a 2 GB AVD the app can die from memory pressure
   without a crash log. Relaunch it and redo `adb forward` for the new pid.
-- **Test data:** use a local workspace, not a signed-in server.
+- **Test data:** use a local workspace, unless the test is about cloud sync.
+  For that, run the server locally (`yarn affine @affine/server dev`, port
+  3010), then run `adb reverse tcp:3010 tcp:3010`. In the app, connect to
+  `http://localhost:3010` and sign in as the seeded dev user. The web dev
+  client on `localhost:8080` proxies to the same server and can act as the
+  second device.
+- **Git Bash:** set `MSYS2_ARG_CONV_EXCL='*'` for `adb shell` commands.
+  Without it, MSYS rewrites `/sdcard/...` into a Windows path. Gradle also
+  rejects a `/c/...` `JAVA_HOME`, so use a Windows path
+  (`C:\Program Files\Android\Android Studio\jbr`).
+- **Typing:** to type into the WebView, tap the field, then send CDP
+  `Input.insertText`. Setting an input's value from JS can hit a different
+  input.
 
 ## Server and web
 

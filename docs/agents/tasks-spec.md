@@ -185,6 +185,13 @@ Confirmed by the user while building:
     - **Open-doc override:** removed from the cloud path. Cloud rows don't need a local doc record; known trashed and template docs are still filtered.
     - **Servers without the tasks API** (official cloud, unpatched self-hosts) fall back to the local indexer path.
     - **Cache:** the list is cached per server, account and workspace.
+  - **Two-client test (2026-10-30).** Setup: a local dev server, the web client in a browser, and the canary APK on the emulator, both signed in to one cloud workspace.
+    - The phone's Tasks view listed todos from a doc it had never opened.
+    - Phone tick → desktop editor: about 0.4 s (server mutation, then normal doc sync).
+    - Desktop tick → phone list: about 16 s (≤ 15 s poll + 2 s extraction debounce).
+    - A due date and priority set on the phone for a task in a doc it hadn't downloaded reached the server and the desktop's Tomorrow view.
+    - The phone list showed one identical state across 45 s and three polls: no flicker.
+    - Not tested: a failed write's row error, the fallback against a server without the API, and the Electron desktop build.
   - **Rejected:**
     - **The server search index:** it lacks the task fields and needs Manticore or Elasticsearch, which the standard self-host compose doesn't include.
     - **A realtime delta ledger:** it depends on the unreliable socket.
