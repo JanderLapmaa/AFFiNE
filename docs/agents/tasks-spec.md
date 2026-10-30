@@ -192,6 +192,13 @@ Confirmed by the user while building:
     - A due date and priority set on the phone for a task in a doc it hadn't downloaded reached the server and the desktop's Tomorrow view.
     - The phone list showed one identical state across 45 s and three polls: no flicker.
     - Not tested: a failed write's row error, the fallback against a server without the API, and the Electron desktop build.
+  - **Repeat on the built server image (2026-10-30).** Setup: the image from `scripts/fork/server-image.Containerfile` on a fresh database, the web client that the image serves, and the canary APK. Both signed in to a new cloud workspace.
+    - The predeploy step (migrations and data migrations) passed on a fresh database.
+    - The workspace's first tasks query backfilled it with 0 docs before the client had pushed any. Docs pushed later were extracted through the update event.
+    - The phone listed all 11 todos without opening the doc.
+    - Phone tick → desktop editor: under 4 s (already applied at the first check).
+    - Desktop tick → phone list: 9 s.
+    - **The browser pane's SharedWorker never synced.** The web client made no socket connection and pushed nothing until `localStorage.disableSharedWorker = 'true'` switched it to a dedicated worker. The image served the nbstore worker, and its socket endpoint answered. The cause wasn't investigated: it may be specific to that embedded browser, and it isn't Tasks code. Check sync in a normal browser before relying on the web client.
   - **Rejected:**
     - **The server search index:** it lacks the task fields and needs Manticore or Elasticsearch, which the standard self-host compose doesn't include.
     - **A realtime delta ledger:** it depends on the unreliable socket.
