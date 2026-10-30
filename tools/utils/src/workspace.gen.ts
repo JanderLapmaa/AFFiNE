@@ -1114,6 +1114,7 @@ export const PackageList = [
       'tools/cli',
       'tools/utils',
       'packages/common/graphql',
+      'packages/common/reader',
       'packages/common/realtime',
     ],
   },
