@@ -8065,6 +8065,10 @@ export function useAFFiNEI18N(): {
       */
     ["com.affine.tasks.row.open-source"](): string;
     /**
+      * `Couldn’t save this change`
+      */
+    ["com.affine.tasks.row.save-failed"](): string;
+    /**
       * `Low priority`
       */
     ["com.affine.tasks.priority.low"](): string;

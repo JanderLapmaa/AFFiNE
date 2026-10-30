@@ -157,3 +157,10 @@ export const actions = style({
       { display: 'flex' },
   },
 });
+
+export const error = style({
+  marginTop: 1,
+  fontSize: 12,
+  lineHeight: '18px',
+  color: cssVarV2.status.error,
+});

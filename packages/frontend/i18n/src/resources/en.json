@@ -2005,6 +2005,7 @@
   "com.affine.tasks.group.untitled-doc": "Untitled",
   "com.affine.tasks.row.toggle": "Toggle task",
   "com.affine.tasks.row.open-source": "Open in doc",
+  "com.affine.tasks.row.save-failed": "Couldn’t save this change",
   "com.affine.tasks.priority.low": "Low priority",
   "com.affine.tasks.priority.medium": "Medium priority",
   "com.affine.tasks.priority.high": "High priority",

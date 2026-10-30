@@ -139,6 +139,11 @@ export const TaskRowItem = forwardRef<HTMLDivElement, TaskRowItemProps>(
                 : task.docTitle}
             </span>
           </button>
+          {task.error ? (
+            <div className={styles.error} role="alert" title={task.error}>
+              {t['com.affine.tasks.row.save-failed']()}
+            </div>
+          ) : null}
         </div>
         <div className={styles.trailing}>
           <div className={styles.meta}>

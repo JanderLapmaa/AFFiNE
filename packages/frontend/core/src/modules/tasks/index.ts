@@ -1,10 +1,13 @@
 import { type Framework } from '@toeverything/infra';
 
+import { WorkspaceServerService } from '../cloud/services/workspace-server';
 import { DocsService } from '../doc';
 import { JournalService } from '../journal';
+import { GlobalCache } from '../storage';
 import { WorkspaceScope, WorkspaceService } from '../workspace';
 import { TasksService } from './services/tasks';
 import { TasksClockStore } from './services/tasks-clock';
+import { TasksCloudApi } from './services/tasks-cloud-api';
 
 export { addDays, localDay } from './date';
 export { TasksService } from './services/tasks';
@@ -30,5 +33,8 @@ export function configureTasksModule(framework: Framework) {
       DocsService,
       TasksClockStore,
       JournalService,
-    ]);
+      TasksCloudApi,
+      GlobalCache,
+    ])
+    .store(TasksCloudApi, [WorkspaceService, WorkspaceServerService]);
 }

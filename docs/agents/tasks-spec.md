@@ -176,13 +176,15 @@ Confirmed by the user while building:
     - **Table and extractor:** one task table (workspace, doc, block, text, refs, checked, due, priority, completedAt, updatedAt, plus a per-workspace extractor version), derived from the docs. Docs stay the only source of truth. An extractor runs on `doc.updates.pushed` (debounced per doc), loads the merged doc with `storage.getDoc`, runs the shared task extractor and replaces that doc's rows in one transaction.
     - **Backfill:** a job extracts every doc on the first query or when the extractor version is bumped.
     - **Query:** `tasks(workspaceId)` returns the whole list, filtered by doc read permission, with an "unchanged" signal.
-    - **Tick:** `setTaskChecked` writes a minimal Yjs delta (`checked` + `completedAt`) through `pushDocUpdates`, the same way `updateDoc` does (needs Doc.Update).
+    - **Writes:** `updateTask(workspaceId, docId, blockId, { checked?, due?, priority? })` writes one minimal Yjs delta (`checked` + `completedAt`, `due`, `priority`; null clears) through `pushDocUpdates`, the same way `updateDoc` does (needs Doc.Update). It started as a tick-only `setTaskChecked`. Review found that cloud due/priority writes through the local doc fail on a device that hasn't downloaded the doc, so every cloud write goes through the server.
     - The migration only adds.
   - **Client:**
     - A task source interface, with one view code path. Cloud workspaces use the server list over plain HTTP GraphQL (no realtime topic). Local workspaces keep the indexer path.
     - The cloud source renders the cached list first and refreshes on open, on foreground, after its own writes, on network-online and every 15 s while visible. It never clears the list while loading.
-    - Optimistic ticks last until the list shows them, or 30 s at most. A failed write shows an error on the row.
-    - The open-doc live override is removed from the cloud path.
+    - **Optimistic writes:** they last until a list fetched after the write shows them, or 30 s at most. A failed write shows an error on the row until a later write or retry succeeds.
+    - **Open-doc override:** removed from the cloud path. Cloud rows don't need a local doc record; known trashed and template docs are still filtered.
+    - **Servers without the tasks API** (official cloud, unpatched self-hosts) fall back to the local indexer path.
+    - **Cache:** the list is cached per server, account and workspace.
   - **Rejected:**
     - **The server search index:** it lacks the task fields and needs Manticore or Elasticsearch, which the standard self-host compose doesn't include.
     - **A realtime delta ledger:** it depends on the unreliable socket.

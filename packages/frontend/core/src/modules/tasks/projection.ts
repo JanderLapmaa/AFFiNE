@@ -20,6 +20,8 @@ export interface IndexedTask {
   order: number | null;
   /** Linked-doc references: UTF-16 offset of the placeholder in `title`, doc id. */
   refs: [number, string][];
+  /** Set by the cloud source when this task's last write failed. */
+  error?: string;
 }
 
 /** Doc-level data from the workspace doc records. */
@@ -85,12 +87,24 @@ export function parseIndexedTask(
     return null;
   }
   if (extra.listType !== 'todo') return null;
-  const priority = extra.priority;
-  const heading = extra.heading;
   return {
     docId,
     blockId,
     title: stringField(fields.content) ?? '',
+    ...normalizeTaskFields(extra),
+  };
+}
+
+/**
+ * The task fields of an index row's additional JSON, or of a server row
+ * (same names), with anything malformed replaced by its default.
+ */
+export function normalizeTaskFields(
+  extra: Record<string, unknown>
+): Omit<IndexedTask, 'docId' | 'blockId' | 'title'> {
+  const priority = extra.priority;
+  const heading = extra.heading;
+  return {
     checked: extra.checked === true,
     due:
       typeof extra.due === 'string' && DUE_RE.test(extra.due)
@@ -147,6 +161,7 @@ function buildItems(
         docTitle: doc.title,
         heading: task.heading,
         overdue: !task.checked && task.due !== null && task.due < today,
+        ...(task.error ? { error: task.error } : {}),
       },
       order: task.order ?? Number.POSITIVE_INFINITY,
       docCreatedAt: doc.createDate ?? 0,

@@ -44,6 +44,8 @@ export interface TaskRow {
   heading: string | null;
   /** Open (unchecked) and due before today. Never true for checked tasks. */
   overdue: boolean;
+  /** The last write to this task failed (cloud workspaces); the row shows the old values. */
+  error?: string;
 }
 
 export interface TaskGroup {
