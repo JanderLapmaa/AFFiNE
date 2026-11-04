@@ -1,0 +1,314 @@
+# Builds and publishes a fork release: the server image (GHCR), the Windows
+# desktop installer and the signed Android APK, attached to one GitHub release.
+# The desktop app checks this repository's releases for updates.
+# See docs/agents/fork-releases.md.
+name: Fork Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version, e.g. 0.27.5-fork.1 (must increase for updates to apply)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_VERSION: ${{ inputs.version }}
+  DEBUG: napi:*
+  APP_NAME: affine
+
+jobs:
+  prepare:
+    name: Check version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate version
+        shell: bash
+        run: |
+          if ! [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-fork\.[0-9]+$ ]]; then
+            echo "Version must look like 0.27.5-fork.1, got '$RELEASE_VERSION'"
+            exit 1
+          fi
+
+  web-bundles:
+    name: Build web, admin and mobile bundles
+    runs-on: ubuntu-latest
+    needs: prepare
+    env:
+      BUILD_TYPE: stable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-version
+        with:
+          app-version: ${{ inputs.version }}
+      - uses: ./.github/actions/setup-node
+        with:
+          electron-install: false
+      - run: yarn affine @affine/web build
+      - run: yarn affine @affine/admin build
+      - run: yarn affine @affine/mobile build
+      - name: Archive bundles
+        run: |
+          tar -czf server-static.tar.gz \
+            packages/frontend/apps/web/dist \
+            packages/frontend/admin/dist \
+            packages/frontend/apps/mobile/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-static
+          path: server-static.tar.gz
+          if-no-files-found: error
+
+  server-image:
+    name: Build and push server image
+    runs-on: ubuntu-latest
+    needs: web-bundles
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-version
+        with:
+          app-version: ${{ inputs.version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: server-static
+      - run: tar -xzf server-static.tar.gz && rm server-static.tar.gz
+      - name: Copy the license public key from the upstream image
+        # Self-hosted servers refuse to start without it; upstream CI embeds it
+        # from a secret, so take the one the official image ships.
+        run: |
+          docker run --rm --entrypoint node ghcr.io/toeverything/affine:stable -e '
+            const b = require("fs").readFileSync("dist/server-native.x64.node", "latin1");
+            const s = b.indexOf("-----BEGIN PUBLIC KEY-----"), e = "-----END PUBLIC KEY-----";
+            if (s < 0) process.exit(1);
+            process.stdout.write(b.slice(s, b.indexOf(e, s) + e.length));' > pro-public-key.pem
+          grep -q "END PUBLIC KEY" pro-public-key.pem
+      - name: Image name
+        id: meta
+        shell: bash
+        # A package the workflow creates is linked to this repository, so the
+        # workflow token can push to it.
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/affine-fork:${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Encode the key for the build arg
+        id: key
+        run: |
+          echo "b64=$(base64 -w0 pro-public-key.pem)" >> "$GITHUB_OUTPUT"
+          rm pro-public-key.pem
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: scripts/fork/server-image.Containerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.image }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          build-args: |
+            AFFINE_PRO_PUBLIC_KEY_B64=${{ steps.key.outputs.b64 }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  desktop-windows:
+    name: Build Windows desktop installer
+    runs-on: windows-latest
+    needs: prepare
+    env:
+      BUILD_TYPE: canary
+      AFFINE_UPDATE_REPO: ${{ github.repository }}
+      AFFINE_UNSIGNED_PACKAGE: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-version
+        with:
+          app-version: ${{ inputs.version }}
+      - uses: ./.github/actions/setup-node
+        timeout-minutes: 15
+        with:
+          extra-flags: workspaces focus @affine/electron @affine/monorepo @affine/nbstore @toeverything/infra
+          hard-link-nm: false
+          nmHoistingLimits: workspaces
+          enableScripts: true
+      - name: Build AFFiNE native
+        uses: ./.github/actions/build-rust
+        with:
+          target: x86_64-pc-windows-msvc
+          package: '@affine/native'
+          cache-key: fork-release-desktop
+      - name: Generate assets
+        run: yarn affine @affine/electron generate-assets
+      - name: Remove nbstore node_modules
+        shell: bash
+        run: |
+          rm -rf packages/frontend/apps/electron/node_modules/@affine/nbstore/node_modules/@blocksuite/affine/node_modules
+          rm -rf packages/frontend/apps/electron/node_modules/@affine/native/node_modules
+      - name: Package
+        run: yarn affine @affine/electron package --platform=win32 --arch=x64
+        env:
+          SKIP_WEB_BUILD: '1'
+          HOIST_NODE_MODULES: '1'
+          NODE_OPTIONS: --max-old-space-size=14384
+      - name: Make NSIS installer
+        run: yarn affine @affine/electron make-nsis --platform=win32 --arch=x64
+      - name: Collect installer
+        shell: bash
+        run: |
+          mkdir -p release
+          installer=$(find packages/frontend/apps/electron/out/canary/make/nsis.windows/x64 -name '*.exe' | head -1)
+          test -n "$installer"
+          # The name the updater matches: affine-<version>-<distribution>-<platform>-<arch>.nsis.exe
+          cp "$installer" "release/affine-${RELEASE_VERSION}-canary-windows-x64.nsis.exe"
+          ls -la release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows
+          path: release
+          if-no-files-found: error
+
+  android:
+    name: Build signed Android APK
+    runs-on: ubuntu-latest
+    needs: prepare
+    env:
+      BUILD_TYPE: canary
+      PUBLIC_PATH: '/'
+    steps:
+      - name: Free disk space
+        # The Rust and Gradle builds need more room than a stock runner has.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/node_modules /opt/ghc /usr/local/.ghcup /usr/share/swift
+          df -h /
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-version
+        with:
+          app-version: ${{ inputs.version }}
+      - uses: ./.github/actions/setup-node
+        with:
+          extra-flags: workspaces focus @affine/monorepo @affine-tools/cli @affine/android
+          electron-install: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+      - name: Setup Rust
+        uses: ./.github/actions/build-rust
+        with:
+          target: 'aarch64-linux-android'
+          package: 'affine_mobile_native'
+          no-build: 'true'
+      - name: Build Android web assets
+        run: yarn affine @affine/android build
+      - name: Write CI Firebase config
+        run: |
+          cat > packages/frontend/apps/android/App/app/google-services.json <<'JSON'
+          {
+            "project_info": {
+              "project_number": "1",
+              "project_id": "affine-ci",
+              "storage_bucket": "affine-ci.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:1:android:0000000000000000",
+                  "android_client_info": {
+                    "package_name": "app.affine.pro.canary"
+                  }
+                },
+                "oauth_client": [],
+                "api_key": [{ "current_key": "ci-placeholder" }],
+                "services": { "appinvite_service": { "other_platform_oauth_client": [] } }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          JSON
+      - name: Cap sync
+        run: yarn workspace @affine/android cap sync
+      - name: Write keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.AFFINE_ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "AFFINE_ANDROID_KEYSTORE_BASE64 secret is missing"; exit 1; }
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "AFFINE_ANDROID_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+      - name: Build signed release APK
+        working-directory: packages/frontend/apps/android/App
+        env:
+          AFFINE_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.AFFINE_ANDROID_KEYSTORE_PASSWORD }}
+          AFFINE_ANDROID_KEY_PASSWORD: ${{ secrets.AFFINE_ANDROID_KEYSTORE_PASSWORD }}
+          AFFINE_ANDROID_KEY_ALIAS: ${{ secrets.AFFINE_ANDROID_KEY_ALIAS }}
+          VERSION_NAME: ${{ inputs.version }}
+          # Must grow with every release; the run number does.
+          VERSION_CODE: ${{ github.run_number }}0
+        run: ./gradlew :app:assembleCanaryRelease --no-daemon --stacktrace
+      - name: Collect APK
+        run: |
+          mkdir -p release
+          cp packages/frontend/apps/android/App/app/build/outputs/apk/canary/release/app-canary-release.apk \
+            "release/affine-${RELEASE_VERSION}-canary-android-arm64.apk"
+          rm -f "$RUNNER_TEMP/release.jks"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: release
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+    needs:
+      - server-image
+      - desktop-windows
+      - android
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-windows
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: android
+          path: release
+      - name: Generate latest.yml
+        # Also writes empty latest-mac.yml and latest-linux.yml; the fork only
+        # ships Windows.
+        run: |
+          node scripts/generate-release-yml.mjs
+          rm -f release/latest-mac.yml release/latest-linux.yml
+          cat release/latest.yml
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ needs.server-image.outputs.image }}
+        shell: bash
+        run: |
+          ls -la release
+          cat > notes.md <<EOF
+          Fork release ${RELEASE_VERSION} (commit ${GITHUB_SHA::9}).
+
+          - **Server image:** \`${IMAGE}\`
+          - **Windows desktop:** \`affine-${RELEASE_VERSION}-canary-windows-x64.nsis.exe\` (unsigned; SmartScreen asks once). Installed apps update themselves from this repository's releases.
+          - **Android:** \`affine-${RELEASE_VERSION}-canary-android-arm64.apk\` (signed with the fork's release key).
+          EOF
+          gh release create "v${RELEASE_VERSION}" \
+            --target "$GITHUB_SHA" \
+            --title "v${RELEASE_VERSION}" \
+            --notes-file notes.md \
+            release/*

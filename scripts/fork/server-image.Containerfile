@@ -14,10 +14,12 @@ ENV CC="clang -D_BSD_SOURCE" TARGET_CC="clang -D_BSD_SOURCE"
 RUN --mount=type=cache,target=/root/.yarn/berry/cache \
     node .yarn/releases/yarn-4.18.0.cjs workspaces focus @affine/server @types/affine__env @affine/server-native
 # Self-hosted servers refuse to start without the AFFiNE Pro license public key
-# compiled into server-native. Pass the one the upstream image embeds (see the doc).
-ARG AFFINE_PRO_PUBLIC_KEY
+# compiled into server-native. Pass the one the upstream image embeds, base64
+# encoded so the multi-line PEM fits in one build arg (see the doc).
+ARG AFFINE_PRO_PUBLIC_KEY_B64
 RUN --mount=type=cache,target=/opt/cargo/registry \
-    test -n "$AFFINE_PRO_PUBLIC_KEY" && \
+    test -n "$AFFINE_PRO_PUBLIC_KEY_B64" && \
+    export AFFINE_PRO_PUBLIC_KEY="$(echo "$AFFINE_PRO_PUBLIC_KEY_B64" | base64 -d)" && \
     cd packages/backend/native && node ../../../.yarn/releases/yarn-4.18.0.cjs build \
     && mv server-native.node server-native.x64.node
 # The bundle must resolve every arch the native loader requires; only x64 is loaded on amd64.

@@ -7,6 +7,10 @@ this repo.
 The fork's target clients are the **Windows desktop app** and the **Android
 app**, both connected to a self-hosted server.
 
+Releases for daily use come from the `Fork Release` workflow, not local
+builds: see `docs/agents/fork-releases.md`. The local steps below are for
+testing changes before a release.
+
 ## Windows desktop (Electron)
 
 Shell: `packages/frontend/apps/electron` (main/preload) +
@@ -145,7 +149,7 @@ podman run --rm --entrypoint node ghcr.io/toeverything/affine:stable -e '
   const b = require("fs").readFileSync("dist/server-native.x64.node", "latin1");
   const s = b.indexOf("-----BEGIN PUBLIC KEY-----"), e = "-----END PUBLIC KEY-----";
   process.stdout.write(b.slice(s, b.indexOf(e, s) + e.length));' > pro-public-key.pem
-podman build --build-arg AFFINE_PRO_PUBLIC_KEY="$(cat pro-public-key.pem)" \
+podman build --build-arg AFFINE_PRO_PUBLIC_KEY_B64="$(base64 -w0 pro-public-key.pem)" \
   -f scripts/fork/server-image.Containerfile -t affine-fork:<tag> <ctx>
 ```
 
