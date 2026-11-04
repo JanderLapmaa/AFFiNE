@@ -33,6 +33,8 @@ interface GithubRelease {
   assets: Array<{
     name: string;
     url: string;
+    // GitHub's API: `url` is the asset's JSON metadata, this is the file.
+    browser_download_url?: string;
     size: number;
   }>;
 }
@@ -44,9 +46,14 @@ interface UpdateProviderOptions {
 
 export class AFFiNEUpdateProvider extends Provider<GithubUpdateInfo> {
   static configFeed(options: UpdateProviderOptions): CustomPublishOptions {
+    // A build with AFFINE_UPDATE_REPO ("owner/name") reads that repository's
+    // GitHub releases, which have the same shape as the AFFiNE feed.
+    const repo = process.env.AFFINE_UPDATE_REPO;
     return {
       provider: 'custom',
-      feedUrl: 'https://affine.pro/api/worker/releases',
+      feedUrl: repo
+        ? `https://api.github.com/repos/${repo}/releases`
+        : 'https://affine.pro/api/worker/releases',
       updateProvider: AFFiNEUpdateProvider,
       ...options,
     };
@@ -113,7 +120,7 @@ export class AFFiNEUpdateProvider extends Provider<GithubUpdateInfo> {
       );
     }
 
-    const channelFileUrl = new URL(channelFileAsset.url);
+    const channelFileUrl = new URL(assetUrl(channelFileAsset));
     const channelFileContent = await this.httpRequest(channelFileUrl);
 
     const result = parseUpdateInfo(
@@ -136,7 +143,7 @@ export class AFFiNEUpdateProvider extends Provider<GithubUpdateInfo> {
           ({ name }) => name === file.url
         );
         if (asset) {
-          file.url = asset.url;
+          file.url = assetUrl(asset);
         }
       });
 
@@ -171,6 +178,10 @@ export class AFFiNEUpdateProvider extends Provider<GithubUpdateInfo> {
         info: file,
       }));
   }
+}
+
+function assetUrl(asset: GithubRelease['assets'][number]) {
+  return asset.browser_download_url ?? asset.url;
 }
 
 type VersionDistribution = 'canary' | 'beta' | 'stable';

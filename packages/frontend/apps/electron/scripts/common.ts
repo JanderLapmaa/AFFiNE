@@ -21,6 +21,8 @@ export const config = (): BuildOptions => {
     'process.env.SENTRY_RELEASE': process.env.SENTRY_RELEASE,
     'process.env.SENTRY_DSN': process.env.SENTRY_DSN,
     'process.env.DEV_SERVER_URL': process.env.DEV_SERVER_URL,
+    // Fork builds point the updater at their own GitHub releases.
+    'process.env.AFFINE_UPDATE_REPO': process.env.AFFINE_UPDATE_REPO,
     'process.env.NODE_ENV': process.env.NODE_ENV,
     REPLACE_ME_BUILD_ENV: process.env.BUILD_TYPE ?? 'stable',
     ...Object.entries(
