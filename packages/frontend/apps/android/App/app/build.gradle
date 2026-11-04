@@ -27,7 +27,7 @@ android {
         applicationId = "app.affine.pro"
         minSdkVersion = rootProject.ext.minSdkVersion
         targetSdkVersion = rootProject.ext.targetSdkVersion
-        versionCode = 1
+        versionCode = (System.getenv('VERSION_CODE') ?: '1').toInteger()
         versionName = System.getenv('VERSION_NAME') ?: 'v1.0.0-local'
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders = [usesCleartextTraffic: "false"]
@@ -45,8 +45,25 @@ android {
         buildConfig = true
         viewBinding = true
     }
+    // Release signing comes from the environment (the fork's release workflow
+    // sets these from repository secrets); without them release builds are
+    // unsigned.
+    def releaseKeystore = System.getenv('AFFINE_ANDROID_KEYSTORE')
+    signingConfigs {
+        if (releaseKeystore) {
+            release {
+                storeFile = file(releaseKeystore)
+                storePassword = System.getenv('AFFINE_ANDROID_KEYSTORE_PASSWORD')
+                keyAlias = System.getenv('AFFINE_ANDROID_KEY_ALIAS')
+                keyPassword = System.getenv('AFFINE_ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
     buildTypes {
         release {
+            if (releaseKeystore) {
+                signingConfig = signingConfigs.release
+            }
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
