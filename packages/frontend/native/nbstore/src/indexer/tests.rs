@@ -347,7 +347,8 @@ async fn crawl_snapshot(bin: &[u8]) -> NativeCrawlResult {
   result
 }
 
-/// The parsed `additional` JSON of a block; `Null` when the block has no row or no additional.
+/// The parsed `additional` JSON of a block; `Null` when the block has no row or
+/// no additional.
 fn additional_of(result: &NativeCrawlResult, block_id: &str) -> Value {
   let additional = result
     .blocks

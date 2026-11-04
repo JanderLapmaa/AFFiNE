@@ -207,8 +207,8 @@ fn is_due_date(value: &str) -> bool {
 }
 
 /// Finite numbers only. JS numbers arrive as `Integer`, `Float32` or
-/// `Float64` (`BigInt64` is rejected, as on the JS side); whole values are emitted as JSON integers, as `JSON.stringify`
-/// does on the JS side.
+/// `Float64` (`BigInt64` is rejected, as on the JS side); whole values are
+/// emitted as JSON integers, as `JSON.stringify` does on the JS side.
 fn json_number(value: f64) -> Option<Number> {
   if !value.is_finite() {
     return None;
