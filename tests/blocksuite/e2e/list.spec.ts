@@ -355,13 +355,15 @@ test('should indent todo block preserve todo status', async ({
 
   await type(page, 'todo item');
   await pressTab(page);
-  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
-    `${testInfo.title}_init.json`
-  );
+  // Ticking a todo records when it was completed; mask the timestamp.
+  const snapshot = async () =>
+    ((await getPageSnapshot(page, true)) as string).replace(
+      /"completedAt": \d+/,
+      '"completedAt": "<timestamp>"'
+    );
+  expect(await snapshot()).toMatchSnapshot(`${testInfo.title}_init.json`);
   await pressShiftTab(page);
-  expect(await getPageSnapshot(page, true)).toMatchSnapshot(
-    `${testInfo.title}_final.json`
-  );
+  expect(await snapshot()).toMatchSnapshot(`${testInfo.title}_final.json`);
 });
 
 test('enter list block with empty text', async ({ page }, testInfo) => {

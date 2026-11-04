@@ -1,7 +1,7 @@
 import { test } from '@affine-test/kit/mobile';
 import { expect } from '@playwright/test';
 
-import { expandCollapsibleSection, pageBack } from './utils';
+import { expandCollapsibleSection, openAllDocs, pageBack } from './utils';
 
 declare global {
   interface Window {
@@ -75,8 +75,8 @@ test('app tabs is visible', async ({ page }) => {
   await expect(tabs).toBeVisible();
 
   await expect(tabs.getByRole('tab', { name: 'home' })).toBeVisible();
-  await expect(tabs.getByRole('tab', { name: 'all' })).toBeVisible();
   await expect(tabs.getByRole('tab', { name: 'journal' })).toBeVisible();
+  await expect(tabs.getByRole('tab', { name: 'tasks' })).toBeVisible();
   await expect(tabs.getByRole('tab', { name: 'new' })).toBeVisible();
 });
 
@@ -114,11 +114,8 @@ test('recent docs', async ({ page }) => {
   }
 });
 
-test('all tab', async ({ page }) => {
-  const docsTab = page.locator('#app-tabs').getByRole('tab', { name: 'all' });
-  await expect(docsTab).toBeVisible();
-
-  await docsTab.click();
+test('all docs link', async ({ page }) => {
+  await openAllDocs(page);
 
   const todayDocs = page.getByTestId('doc-list-item');
   await expect(todayDocs.first()).toBeVisible();

@@ -12,6 +12,7 @@
               "props": {
                 "checked": true,
                 "collapsed": false,
+                "completedAt": "<timestamp>",
                 "order": null,
                 "text": {
                   "$blocksuite:internal:text$": true,

@@ -23,6 +23,14 @@ export async function expandCollapsibleSection(page: Page, name: string) {
 }
 
 /**
+ * Open All docs. The Tasks tab replaces the All docs tab, so home links to it.
+ */
+export async function openAllDocs(page: Page) {
+  await page.getByTestId('home-all-docs-link').click();
+  await expect(page.getByTestId('doc-list-item').first()).toBeVisible();
+}
+
+/**
  * Click header "<" button
  */
 export async function pageBack(page: Page) {

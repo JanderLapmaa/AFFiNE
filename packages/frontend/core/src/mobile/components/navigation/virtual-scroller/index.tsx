@@ -87,7 +87,11 @@ const AllDocsLink = () => {
   );
   if (!tasksEnabled) return null;
   return (
-    <WorkbenchLink to="/all" className={styles.allDocsLink}>
+    <WorkbenchLink
+      to="/all"
+      className={styles.allDocsLink}
+      data-testid="home-all-docs-link"
+    >
       <AllDocsIcon />
       {t['com.affine.workspaceSubPath.all']()}
     </WorkbenchLink>

@@ -1,6 +1,8 @@
 import { test } from '@affine-test/kit/mobile';
 import { expect, type Page } from '@playwright/test';
 
+import { openAllDocs } from './utils';
+
 const openDocInfoModal = async (page: Page) => {
   await page.click('[data-testid="detail-page-header-more-button"]');
   await expect(page.getByRole('dialog')).toBeVisible();
@@ -17,9 +19,7 @@ const openDocInfoModal = async (page: Page) => {
 };
 
 test.beforeEach(async ({ page }) => {
-  const docsTab = page.locator('#app-tabs').getByRole('tab', { name: 'all' });
-  await expect(docsTab).toBeVisible();
-  await docsTab.click();
+  await openAllDocs(page);
   await page.getByTestId('doc-list-item').first().click();
   await expect(page.locator('.affine-page-viewport')).toBeVisible();
 });
