@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { flushSync } from 'react-dom';
 
 import * as styles from './styles.css';
 
@@ -36,14 +37,31 @@ export function QuickAdd() {
   const [now, setNow] = useState(() => Date.now());
   const parsed = useMemo(() => parseQuickAdd(text, localDay(now)), [now, text]);
 
-  // Every time it is shown: an empty field, focused.
+  // Cleared when it closes, so it is already empty when it is next shown;
+  // shown again, it is cleared once more (the date may have changed) and the
+  // window stays see-through until that has been painted (`painted`).
   useEffect(() => {
-    return events?.quickAdd.onShown(() => {
-      setText('');
-      setStatus({ kind: 'idle' });
-      setNow(Date.now());
+    const clear = () => {
+      flushSync(() => {
+        setText('');
+        setStatus({ kind: 'idle' });
+        setNow(Date.now());
+      });
+    };
+    const offHidden = events?.quickAdd.onHidden(clear);
+    const offShown = events?.quickAdd.onShown(() => {
+      clear();
       inputRef.current?.focus();
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          apis?.quickAdd.painted().catch(console.error);
+        })
+      );
     });
+    return () => {
+      offHidden?.();
+      offShown?.();
+    };
   }, []);
 
   const submit = useCallback(async () => {

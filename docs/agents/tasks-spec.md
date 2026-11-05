@@ -245,11 +245,32 @@ priority? })` mutation. Under a per-workspace lock the server creates the
   - **UI:** an Add task field at the top of every view but Completed, on desktop
     and mobile (shared `TaskList`); Today and Tomorrow give their date to a task
     without a date token. No Android floating button (story 52).
-  - **Desktop global shortcut:** `Alt+A` anywhere opens a quick-add popup
-    (`apps/electron/src/main/quick-add/`). The popup hands the text to the
-    active app tab, which adds it to its current workspace; no tab answering in
-    10 s shows "Open a workspace in AFFiNE first". It needs AFFiNE running
-    (closing to the tray keeps it available).
+  - **Desktop global shortcut:** `AltGr+A` anywhere opens a quick-add popup
+    (`apps/electron/src/main/quick-add/`). Windows sends AltGr as Ctrl+Alt, and
+    Electron's `AltGr` modifier is dropped by the Windows hotkey (it would
+    register plain `A`), so `Ctrl+Alt+A` is registered there. The popup hands
+    the text to the active app tab, which adds it to its current workspace; no
+    tab answering in 10 s shows "Open a workspace in AFFiNE first". It needs
+    AFFiNE running (closing to the tray keeps it available).
+  - **Popup window on Windows (2026-11-05, measured with screen captures):**
+    - Windows fades a window in every time it goes from hidden to shown
+      (~200 ms); `thickFrame: false` and setting `DWMWA_TRANSITIONS_FORCEDISABLED`
+      from outside the process don't stop it. So the popup is "parked" while
+      closed: shown in place without focus, opacity 0 and click-through. Opening
+      makes it opaque, which is instant.
+    - A plain `hide()` leaves Windows' focus on the hidden popup: keys typed
+      next go nowhere and the next press does nothing. Closing minimizes, then
+      hides (focus goes back to the previous app), then re-parks 250 ms later
+      with `showInactive`.
+    - The popup only gets focus if `show()`/`focus()` run synchronously in the
+      shortcut callback (an `await` first lost focus about 1 press in 4).
+    - A window that is off-screen doesn't repaint, so parking is in place, and
+      the field is cleared on close; opening also waits (≤150 ms) for the
+      popup's `painted` reply before going opaque, so no stale text shows.
+    - It is built and parked at start-up: the first show of a new window took
+      ~1 s.
+    - Measured: visible ≤35 ms after the key press, no fade. Parking is
+      Windows-only; other platforms hide the popup as before.
 
 ## Testing Decisions
 
