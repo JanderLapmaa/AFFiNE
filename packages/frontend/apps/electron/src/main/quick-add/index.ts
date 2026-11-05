@@ -18,7 +18,7 @@ export const QUICK_ADD_SHORTCUT = 'Alt+A';
 
 const WINDOW_NAME = 'quick-add';
 const WIDTH = 560;
-const HEIGHT = 132;
+const HEIGHT = 90;
 
 const broker = new QuickAddBroker();
 const shown$ = new Subject<void>();
