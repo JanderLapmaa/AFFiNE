@@ -3,7 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import test from 'ava';
 import Sinon from 'sinon';
-import { applyUpdate, Doc, encodeStateAsUpdate, Map as YMap } from 'yjs';
+import {
+  applyUpdate,
+  Array as YArray,
+  Doc,
+  encodeStateAsUpdate,
+  Map as YMap,
+} from 'yjs';
 
 import { createModule } from '../../../__tests__/create-module';
 import { Mockers } from '../../../__tests__/mocks';
@@ -614,4 +620,126 @@ test('updateTask sets and clears due and priority, and rejects bad input', async
   );
   const after = await storage.getDoc(ws.id, 'doc-1');
   t.deepEqual(Buffer.from(after!.bin), Buffer.from(before!.bin));
+});
+
+/** A workspace root doc with an empty page list, as a client creates it. */
+async function putRootDoc(workspaceId: string) {
+  const doc = new Doc();
+  doc.getMap('meta').set('pages', new YArray());
+  await putDoc(workspaceId, workspaceId, encodeStateAsUpdate(doc));
+}
+
+async function readStoredDoc(workspaceId: string, docId: string) {
+  const record = await storage.getDoc(workspaceId, docId);
+  const doc = new Doc();
+  if (record) applyUpdate(doc, record.bin);
+  return doc;
+}
+
+test('createTask creates the Tasks doc once and appends to it', async t => {
+  const ws = await createWorkspace();
+  await putRootDoc(ws.id);
+
+  const first = await resolver.createTask(owner as never, ws.id, {
+    text: '  Call bank ',
+    due: '2026-10-29',
+    priority: 3,
+  });
+  t.like(first, {
+    docId: 'tasks-doc',
+    text: 'Call bank',
+    checked: false,
+    due: '2026-10-29',
+    priority: 3,
+  });
+  const second = await resolver.createTask(owner as never, ws.id, {
+    text: 'Buy milk',
+  });
+  t.like(second, { docId: 'tasks-doc', due: null, priority: null });
+  t.not(second.blockId, first.blockId);
+
+  // one doc with one page, holding both todos in order
+  const doc = await readStoredDoc(ws.id, 'tasks-doc');
+  const blocks = [...doc.getMap<YMap<unknown>>('blocks').values()];
+  t.is(blocks.filter(b => b.get('sys:flavour') === 'affine:page').length, 1);
+  const page = blocks.find(b => b.get('sys:flavour') === 'affine:page')!;
+  t.is(page.get('prop:title')!.toString(), 'Tasks');
+
+  // registered in the workspace, so clients list the doc
+  const root = await readStoredDoc(ws.id, ws.id);
+  const pages = (root.getMap('meta').get('pages') as YArray<YMap<unknown>>)
+    .toArray()
+    .map(p => p.get('id'));
+  t.deepEqual(pages, ['tasks-doc']);
+
+  // the list has them at once
+  await extractor.backfillSettled(ws.id);
+  const list = await service.list(owner.id, ws.id);
+  t.deepEqual(
+    list.tasks!.filter(r => r.docId === 'tasks-doc').map(r => r.text),
+    ['Call bank', 'Buy milk']
+  );
+});
+
+test('concurrent createTask calls create one Tasks doc', async t => {
+  const ws = await createWorkspace();
+  await putRootDoc(ws.id);
+  const results = await Promise.all(
+    ['a', 'b', 'c'].map(text =>
+      resolver.createTask(owner as never, ws.id, { text })
+    )
+  );
+  t.is(new Set(results.map(r => r.blockId)).size, 3);
+  const doc = await readStoredDoc(ws.id, 'tasks-doc');
+  const blocks = [...doc.getMap<YMap<unknown>>('blocks').values()];
+  t.is(blocks.filter(b => b.get('sys:flavour') === 'affine:page').length, 1);
+  t.is(blocks.filter(b => b.get('sys:flavour') === 'affine:note').length, 1);
+  t.is(blocks.filter(b => b.get('sys:flavour') === 'affine:list').length, 3);
+  const root = await readStoredDoc(ws.id, ws.id);
+  t.is((root.getMap('meta').get('pages') as YArray<unknown>).length, 1);
+});
+
+test('createTask rejects bad input and writes nothing', async t => {
+  const ws = await createWorkspace();
+  await putRootDoc(ws.id);
+  await t.throwsAsync(
+    resolver.createTask(owner as never, ws.id, { text: '   ' }),
+    { instanceOf: BadRequest }
+  );
+  await t.throwsAsync(
+    resolver.createTask(owner as never, ws.id, { text: 'x', due: 'soon' }),
+    { instanceOf: BadRequest }
+  );
+  t.is(await storage.getDoc(ws.id, 'tasks-doc'), null);
+});
+
+test('createTask is denied without Doc.Update on the Tasks doc', async t => {
+  const ws = await createWorkspace();
+  await putRootDoc(ws.id);
+  const member = await module.create(Mockers.User);
+  await module.create(Mockers.WorkspaceUser, {
+    workspaceId: ws.id,
+    userId: member.id,
+    type: WorkspaceRole.Collaborator,
+  });
+  await module.create(Mockers.DocMeta, {
+    workspaceId: ws.id,
+    docId: 'tasks-doc',
+    defaultRole: DocRole.Reader,
+  });
+  await t.throwsAsync(
+    resolver.createTask(member as never, ws.id, { text: 'x' }),
+    { instanceOf: DocActionDenied }
+  );
+  t.is(await storage.getDoc(ws.id, 'tasks-doc'), null);
+});
+
+test('createTask is denied to a user outside the workspace', async t => {
+  const ws = await createWorkspace();
+  await putRootDoc(ws.id);
+  const stranger = await module.create(Mockers.User);
+  await t.throwsAsync(
+    resolver.createTask(stranger as never, ws.id, { text: 'x' })
+  );
+  t.is(await storage.getDoc(ws.id, 'tasks-doc'), null);
 });

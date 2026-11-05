@@ -49,13 +49,16 @@ export class DocWriter {
    * @param title - The document title
    * @param markdown - The markdown content (body only)
    * @param editorId - Actor user ID
+   * @param options.docId - Use this id instead of a new one (the caller makes
+   *   sure no such doc exists)
    * @returns The created document ID
    */
   async createDoc(
     workspaceId: string,
     title: string,
     markdown: string,
-    editorId: string
+    editorId: string,
+    options: { docId?: string } = {}
   ): Promise<CreateDocResult> {
     // Fetch workspace root doc first - reject if not found
     // The root doc (docId = workspaceId) contains meta.pages array
@@ -74,7 +77,7 @@ export class DocWriter {
           rootDoc.bin.byteLength
         );
 
-    const docId = nanoid();
+    const docId = options.docId ?? nanoid();
 
     this.logger.debug(
       `Creating doc ${docId} in workspace ${workspaceId} from markdown`

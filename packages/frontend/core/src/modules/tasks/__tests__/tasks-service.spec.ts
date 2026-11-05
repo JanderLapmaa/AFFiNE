@@ -212,6 +212,7 @@ function setup(
   const released: string[] = [];
   /** A write fails while this is set. */
   let failWrites = false;
+  let addedBlocks = 0;
   const docs$ = new BehaviorSubject<DocSpec[]>(
     options.docs ?? [
       { id: 'doc-a', title: 'Doc A' },
@@ -258,16 +259,75 @@ function setup(
         get value() {
           if (!records.has(id)) return undefined;
           const doc = docs$.value.find(d => d.id === id);
-          return { trash$: { value: !!doc?.trash } };
+          return {
+            trash$: { value: !!doc?.trash },
+            restoreFromTrash: () =>
+              docs$.next(
+                docs$.value.map(d => (d.id === id ? { ...d, trash: false } : d))
+              ),
+          };
         },
       }),
     },
+    /** Like `initDocFromProps`: a page with one note. */
+    createDoc: vi.fn((opts: { id: string; title?: string }) => {
+      const ydoc = new YDoc({ guid: opts.id });
+      ydocs.set(opts.id, ydoc);
+      const blocks = ydoc.getMap<YMap<unknown>>('blocks');
+      const page = new YMap<unknown>();
+      page.set('sys:id', 'page');
+      page.set('sys:flavour', 'affine:page');
+      page.set('sys:children', YArray.from<string>(['note']));
+      const note = new YMap<unknown>();
+      note.set('sys:id', 'note');
+      note.set('sys:flavour', 'affine:note');
+      note.set('sys:children', YArray.from<string>([]));
+      blocks.set('page', page);
+      blocks.set('note', note);
+      records.add(opts.id);
+      docs$.next([...docs$.value, { id: opts.id, title: opts.title }]);
+      return { id: opts.id };
+    }),
     open: vi.fn((docId: string) => {
       opened.push(docId);
       const ydoc = ydocs.get(docId) ?? new YDoc({ guid: docId });
+      const blocks = ydoc.getMap<YMap<unknown>>('blocks');
       // `updateBlock` skips `undefined` like the real store.
       const store = {
+        id: docId,
         readonly: false,
+        get root() {
+          return blocks.has('page') ? { id: 'page' } : null;
+        },
+        getModelsByFlavour: (flavour: string) =>
+          [...blocks.values()]
+            .filter(b => b.get('sys:flavour') === flavour)
+            .map(b => ({ id: b.get('sys:id') as string })),
+        addBlock: (
+          flavour: string,
+          props: Record<string, unknown>,
+          parentId: string
+        ) => {
+          if (failWrites) throw new Error('write failed');
+          const id = `new-${++addedBlocks}`;
+          ydoc.transact(() => {
+            const block = new YMap<unknown>();
+            block.set('sys:id', id);
+            block.set('sys:flavour', flavour);
+            block.set('sys:children', YArray.from<string>([]));
+            for (const [k, v] of Object.entries(props)) {
+              block.set(
+                `prop:${k}`,
+                k === 'text' ? (v as { yText: YText }).yText : v
+              );
+            }
+            blocks.set(id, block);
+            (blocks.get(parentId)!.get('sys:children') as YArray<string>).push([
+              id,
+            ]);
+          });
+          return id;
+        },
         transact: (fn: () => void) => ydoc.transact(fn),
         updateBlock: (
           model: { props: Record<string, unknown> },
@@ -344,12 +404,15 @@ function setup(
     opened,
     released,
     open: docsService.open,
+    createDoc: docsService.createDoc,
     /** the index catches up with the given tasks */
     index: (tasks: TaskSpec[]) => rows$.next({ nodes: tasks.map(node) }),
     deleteDocs: () => records.clear(),
     trashAll: (trash: boolean) =>
       docs$.next(docs$.value.map(d => ({ ...d, trash }))),
     failWrites: (fail: boolean) => (failWrites = fail),
+    /** a block's text in the source doc */
+    text: (key: string) => blockMap(key)?.get('prop:text')?.toString(),
     /** a block's props in the source doc */
     props: (key: string) => {
       const block = blockMap(key);
@@ -1246,11 +1309,37 @@ describe('cloud workspace (server task list)', () => {
         if (state.failUpdate) throw new Error('boom');
       }
     );
+    let created = 0;
+    /** The server adds the task to its Tasks doc and lists it from now on. */
+    const createTask = vi.fn(
+      async (input: {
+        text: string;
+        due: string | null;
+        priority: number | null;
+      }) => {
+        if (state.failUpdate) throw new Error('boom');
+        const row = cloudRow({
+          docId: 'tasks-doc',
+          blockId: `q${++created}`,
+          title: input.text,
+          due: input.due,
+          priority: (input.priority ?? 0) as CloudRow['priority'],
+        });
+        rows = [...rows, row];
+        version++;
+        return row;
+      }
+    );
     const cache = new MemoryMemento();
     if (options.cached && cacheKey) cache.set(cacheKey, options.cached);
     const env = setup({
       flavour: 'cloud',
-      cloudApi: { fetchTasks, updateTask, cacheKey: () => cacheKey },
+      cloudApi: {
+        fetchTasks,
+        updateTask,
+        createTask,
+        cacheKey: () => cacheKey,
+      },
       cache,
       docs: options.docs,
       tasks: options.indexed,
@@ -1259,6 +1348,7 @@ describe('cloud workspace (server task list)', () => {
       ...env,
       fetchTasks,
       updateTask,
+      createTask,
       state,
       /** the server list changes */
       serve: (next: RowSpec[]) => {
@@ -1468,6 +1558,67 @@ describe('cloud workspace (server task list)', () => {
     env.service.retry();
     await settle();
     expect(blockIds(view.value)).toEqual(['near']);
+  });
+
+  describe('quick add', () => {
+    it('adds through the server and shows the row at once', async () => {
+      vi.useFakeTimers();
+      const env = cloudSetup({ server: [{ blockId: 't1' }] });
+      const tomorrow = viewOf(env, 'tomorrow');
+      await settle();
+      // the next poll would answer slowly: the row must not wait for it
+      const release = env.gate();
+      const result = await env.service.quickAdd('Call bank @tomorrow !high');
+      expect(env.createTask).toHaveBeenCalledWith({
+        text: 'Call bank',
+        due: '2026-10-29',
+        priority: 3,
+      });
+      expect(result).toEqual({
+        id: 'tasks-doc:q1',
+        title: 'Call bank',
+        due: '2026-10-29',
+        priority: 3,
+      });
+      expect(env.opened).toEqual([]);
+      expect(tomorrow.value[0]?.rows[0]).toMatchObject({
+        id: 'tasks-doc:q1',
+        title: 'Call bank',
+        priority: 3,
+      });
+      release();
+      await settle();
+      // still one row once the server list has it
+      expect(blockIds(tomorrow.value)).toEqual(['q1']);
+    });
+
+    it('rejects and adds nothing when the server fails', async () => {
+      vi.useFakeTimers();
+      const env = cloudSetup({ server: [{ blockId: 't1' }] });
+      const all = viewOf(env, 'all');
+      await settle();
+      env.state.failUpdate = true;
+      await expect(env.service.quickAdd('x')).rejects.toThrow('boom');
+      expect(blockIds(all.value)).toEqual(['t1']);
+    });
+
+    it('a server without createTask falls back to the local doc', async () => {
+      vi.useFakeTimers();
+      const env = cloudSetup({ server: [{ blockId: 't1' }] });
+      const inbox = viewOf(env, 'inbox');
+      await settle();
+      env.createTask.mockRejectedValueOnce(
+        new Error('Cannot query field "createTask" on type "Mutation".')
+      );
+      const { id } = await env.service.quickAdd('offline idea');
+      expect(id).toMatch(/^tasks-doc:/);
+      expect(env.createDoc).toHaveBeenCalledTimes(1);
+      expect(env.text(id)).toBe('offline idea');
+      await settle();
+      expect(inbox.value.flatMap(g => g.rows).map(r => r.title)).toEqual([
+        'offline idea',
+      ]);
+    });
   });
 
   it('falls back to the indexer when a write hits a server without updateTask', async () => {
@@ -1769,5 +1920,119 @@ describe('cloud workspace (server task list)', () => {
       await settle();
       expect(rowOf(env, 't1')?.error).toBeUndefined();
     });
+  });
+});
+
+describe('quick add', () => {
+  const allRows = (groups: TaskGroup[]) => groups.flatMap(g => g.rows);
+
+  it('creates the Tasks doc on first use and shows the task at once', async () => {
+    const env = setup();
+    const inbox = viewOf(env, 'inbox');
+    const counts = watch(env.service.counts$);
+
+    const result = await env.service.quickAdd('Buy milk');
+    expect(env.createDoc).toHaveBeenCalledWith({
+      id: 'tasks-doc',
+      title: 'Tasks',
+    });
+    expect(result).toMatchObject({ title: 'Buy milk', due: null, priority: 0 });
+    expect(env.text(result.id)).toBe('Buy milk');
+    expect(env.props(result.id)).toMatchObject({
+      type: 'todo',
+      checked: false,
+    });
+    expect(env.props(result.id)).not.toHaveProperty('due');
+    // before the index has it
+    expect(allRows(inbox.value)).toMatchObject([
+      { id: result.id, title: 'Buy milk', docTitle: 'Tasks' },
+    ]);
+    expect(counts.value.inbox).toBe(1);
+  });
+
+  it('reuses the Tasks doc', async () => {
+    const env = setup();
+    const all = viewOf(env, 'all');
+    const a = await env.service.quickAdd('one');
+    const b = await env.service.quickAdd('two');
+    expect(env.createDoc).toHaveBeenCalledTimes(1);
+    expect(a.id.split(':')[0]).toBe(b.id.split(':')[0]);
+    expect(allRows(all.value).map(r => r.title)).toEqual(['one', 'two']);
+  });
+
+  it('two adds at once create the doc once', async () => {
+    const env = setup();
+    await Promise.all([
+      env.service.quickAdd('one'),
+      env.service.quickAdd('two'),
+    ]);
+    expect(env.createDoc).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads date and priority tokens', async () => {
+    const env = setup();
+    const tomorrow = viewOf(env, 'tomorrow');
+    const result = await env.service.quickAdd('Call bank @tomorrow !high');
+    expect(result).toMatchObject({
+      title: 'Call bank',
+      due: '2026-10-29',
+      priority: 3,
+    });
+    expect(env.text(result.id)).toBe('Call bank');
+    expect(env.props(result.id)).toMatchObject({
+      due: '2026-10-29',
+      priority: 3,
+    });
+    expect(allRows(tomorrow.value).map(r => r.title)).toEqual(['Call bank']);
+  });
+
+  it('gives the default date to a task without a date token', async () => {
+    const env = setup();
+    const today = viewOf(env, 'today');
+    const a = await env.service.quickAdd('a', { defaultDue: '2026-10-28' });
+    const b = await env.service.quickAdd('b @tomorrow', {
+      defaultDue: '2026-10-28',
+    });
+    expect(a.due).toBe('2026-10-28');
+    expect(b.due).toBe('2026-10-29');
+    expect(allRows(today.value).map(r => r.title)).toEqual(['a']);
+  });
+
+  it('rejects text that is only tokens, and bad default dates', async () => {
+    const env = setup();
+    await expect(env.service.quickAdd('  @today !high ')).rejects.toThrow();
+    await expect(
+      env.service.quickAdd('x', { defaultDue: 'soon' })
+    ).rejects.toThrow();
+    expect(env.createDoc).not.toHaveBeenCalled();
+  });
+
+  it('restores a trashed Tasks doc', async () => {
+    const env = setup();
+    const all = viewOf(env, 'all');
+    await env.service.quickAdd('one');
+    env.docs$.next(
+      env.docs$.value.map(d =>
+        d.id === 'tasks-doc' ? { ...d, trash: true } : d
+      )
+    );
+    expect(allRows(all.value)).toEqual([]);
+    await env.service.quickAdd('two');
+    expect(env.createDoc).toHaveBeenCalledTimes(1);
+    expect(allRows(all.value).map(r => r.title)).toEqual(['one', 'two']);
+  });
+
+  it('a failed write rejects', async () => {
+    const env = setup();
+    env.failWrites(true);
+    await expect(env.service.quickAdd('x')).rejects.toThrow('write failed');
+  });
+
+  it('a new task can be triaged and ticked like any other', async () => {
+    const env = setup();
+    const { id } = await env.service.quickAdd('x');
+    await env.service.setDue(id, '2026-10-30');
+    await env.service.toggle(id);
+    expect(env.props(id)).toMatchObject({ due: '2026-10-30', checked: true });
   });
 });

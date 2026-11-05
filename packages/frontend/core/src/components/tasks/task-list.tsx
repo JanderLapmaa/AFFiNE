@@ -27,6 +27,7 @@ import {
   useState,
 } from 'react';
 
+import { AddTaskField } from './add-task-field';
 import { groupLabel } from './format';
 import * as styles from './task-list.css';
 import { TaskRowItem } from './task-row';
@@ -253,6 +254,7 @@ export const TaskList = ({
       data-testid="tasks-list"
       data-mobile={BUILD_CONFIG.isMobileEdition}
     >
+      {view === 'completed' ? null : <AddTaskField view={view} />}
       {failed ? <ErrorBanner onRetry={onRetry} /> : null}
       {loading ? <TasksSkeleton /> : null}
       {showEmpty ? <EmptyState view={view} onGoToInbox={onGoToInbox} /> : null}

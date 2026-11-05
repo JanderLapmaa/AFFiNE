@@ -1,0 +1,17 @@
+mutation createTask($workspaceId: String!, $input: CreateTaskInput!) {
+  createTask(workspaceId: $workspaceId, input: $input) {
+    docId
+    blockId
+    text
+    refs {
+      offset
+      docId
+    }
+    heading
+    order
+    checked
+    due
+    priority
+    completedAt
+  }
+}

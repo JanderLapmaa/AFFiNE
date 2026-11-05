@@ -1,8 +1,14 @@
+import { readDocTasks } from '@affine/reader/task-fields';
 import test from 'ava';
 import { applyUpdate, Doc, encodeStateAsUpdate, Map as YMap } from 'yjs';
 
 import { BadRequest } from '../../../base';
-import { buildTaskDelta, validateTaskChanges } from '../delta';
+import {
+  buildAppendTodoDelta,
+  buildTaskDelta,
+  validateNewTask,
+  validateTaskChanges,
+} from '../delta';
 import { buildDocBin } from './helpers';
 
 const NOW = 1_767_225_600_000;
@@ -191,3 +197,79 @@ test('invalid due and priority are rejected', t => {
 function encodeBin(doc: Doc) {
   return encodeStateAsUpdate(doc);
 }
+
+test('appending a todo adds it to the end of the first note', t => {
+  const bin = buildDocBin([{ id: 'a', text: 'first' }]);
+  const update = buildAppendTodoDelta(bin, 'new', {
+    text: 'Call bank',
+    due: '2026-10-29',
+    priority: 3,
+  });
+  t.truthy(update);
+  const doc = new Doc();
+  applyUpdate(doc, bin);
+  applyUpdate(doc, update!);
+  const blocks = doc.getMap<YMap<unknown>>('blocks');
+  t.deepEqual(
+    (
+      blocks.get('note')!.get('sys:children') as { toArray(): string[] }
+    ).toArray(),
+    ['a', 'new']
+  );
+  const block = blocks.get('new')!;
+  t.is(block.get('sys:flavour'), 'affine:list');
+  t.is(block.get('prop:type'), 'todo');
+  t.is(block.get('prop:checked'), false);
+  t.is(block.get('prop:text')!.toString(), 'Call bank');
+  // the server list reads it like any other todo
+  t.like(
+    readDocTasks(doc).find(task => task.blockId === 'new'),
+    { text: 'Call bank', checked: false, due: '2026-10-29', priority: 3 }
+  );
+  // applying it twice adds nothing
+  applyUpdate(doc, update!);
+  t.is(readDocTasks(doc).length, 2);
+});
+
+test('appending a todo without date or priority sets neither', t => {
+  const bin = buildDocBin([]);
+  const update = buildAppendTodoDelta(bin, 'new', { text: 'x' });
+  const block = readBlock(
+    encodeStateAsUpdate(
+      (() => {
+        const doc = new Doc();
+        applyUpdate(doc, bin);
+        applyUpdate(doc, update!);
+        return doc;
+      })()
+    ),
+    'new'
+  );
+  t.false(block.has('prop:due'));
+  t.false(block.has('prop:priority'));
+});
+
+test('appending to a doc without a note gives null', t => {
+  const doc = new Doc();
+  const page = new YMap<unknown>();
+  doc.getMap('blocks').set('page', page);
+  page.set('sys:flavour', 'affine:page');
+  t.is(
+    buildAppendTodoDelta(encodeStateAsUpdate(doc), 'new', { text: 'x' }),
+    null
+  );
+});
+
+test('a new task needs text and valid fields', t => {
+  t.deepEqual(validateNewTask({ text: '  hi  ' }), { text: 'hi' });
+  t.throws(() => validateNewTask({ text: '   ' }), { instanceOf: BadRequest });
+  t.throws(() => validateNewTask({ text: 'x'.repeat(10_001) }), {
+    instanceOf: BadRequest,
+  });
+  t.throws(() => validateNewTask({ text: 'x', due: '2026-02-31' }), {
+    instanceOf: BadRequest,
+  });
+  t.throws(() => validateNewTask({ text: 'x', priority: 4 }), {
+    instanceOf: BadRequest,
+  });
+});

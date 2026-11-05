@@ -1,4 +1,9 @@
-import { updateTaskMutation, workspaceTasksQuery } from '@affine/graphql';
+import {
+  type CreateTaskMutation,
+  createTaskMutation,
+  updateTaskMutation,
+  workspaceTasksQuery,
+} from '@affine/graphql';
 import { Store } from '@toeverything/infra';
 
 import type { WorkspaceServerService } from '../../cloud/services/workspace-server';
@@ -18,6 +23,28 @@ export interface CloudTaskUpdate {
   checked?: boolean;
   due?: string | null;
   priority?: number | null;
+}
+
+/** A todo to add to the workspace's Tasks doc. */
+export interface CloudNewTask {
+  text: string;
+  due: string | null;
+  priority: number | null;
+}
+
+/** A task as the server sends it. */
+type ServerTask = CreateTaskMutation['createTask'];
+
+function toIndexedTask(task: ServerTask): IndexedTask {
+  return {
+    docId: task.docId,
+    blockId: task.blockId,
+    title: task.text,
+    ...normalizeTaskFields({
+      ...task,
+      refs: task.refs.map(ref => [ref.offset, ref.docId]),
+    }),
+  };
 }
 
 /** The server task list, over plain GraphQL. Stub this in tests. */
@@ -63,17 +90,7 @@ export class TasksCloudApi extends Store {
     return {
       etag,
       ready,
-      tasks: tasks
-        ? tasks.map((task): IndexedTask => ({
-            docId: task.docId,
-            blockId: task.blockId,
-            title: task.text,
-            ...normalizeTaskFields({
-              ...task,
-              refs: task.refs.map(ref => [ref.offset, ref.docId]),
-            }),
-          }))
-        : null,
+      tasks: tasks ? tasks.map(toIndexedTask) : null,
     };
   }
 
@@ -93,5 +110,18 @@ export class TasksCloudApi extends Store {
       },
       context: { signal },
     });
+  }
+
+  /** Appends a todo to the Tasks doc on the server; resolves with its row. */
+  async createTask(
+    input: CloudNewTask,
+    signal?: AbortSignal
+  ): Promise<IndexedTask> {
+    const data = await this.gql({
+      query: createTaskMutation,
+      variables: { workspaceId: this.workspaceService.workspace.id, input },
+      context: { signal },
+    });
+    return toIndexedTask(data.createTask);
   }
 }

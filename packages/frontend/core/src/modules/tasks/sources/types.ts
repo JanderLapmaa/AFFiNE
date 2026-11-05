@@ -13,6 +13,13 @@ export interface TaskValues {
 
 export type Patch = Partial<TaskValues>;
 
+/** A quick-added task: an unchecked todo. */
+export interface NewTask {
+  text: string;
+  due: string | null;
+  priority: TaskPriority;
+}
+
 /**
  * Where the task rows come from. The service shapes them into views the same
  * way for every source; a source owns finding the rows, keeping them fresh and
@@ -32,5 +39,10 @@ export interface TaskSource {
    * written. The service runs writes one at a time.
    */
   apply(id: string, decide: (before: TaskValues) => Patch): Promise<Patch>;
+  /**
+   * Appends the task to the workspace's Tasks doc (created when missing) and
+   * resolves with its task id once the row shows.
+   */
+  create(task: NewTask): Promise<string>;
   dispose(): void;
 }

@@ -1,9 +1,9 @@
 import { setTodoChecked } from '@blocksuite/affine/blocks/list';
 import type { ListBlockModel } from '@blocksuite/affine/model';
-import type { Store } from '@blocksuite/affine/store';
+import { type Store, Text } from '@blocksuite/affine/store';
 
 import type { TaskPriority } from '../types';
-import type { Patch, TaskValues } from './types';
+import type { NewTask, Patch, TaskValues } from './types';
 
 export function splitTaskId(id: string) {
   const at = id.indexOf(':');
@@ -72,4 +72,33 @@ export function writeTaskValues(
     Object.assign(previous, { [key]: before[key] });
   }
   return previous;
+}
+
+export { TASKS_DOC_ID, TASKS_DOC_TITLE } from '@affine/reader';
+
+/**
+ * Appends an unchecked todo block to the first note of a loaded doc (a note is
+ * added when the doc has none) and returns the new block's id.
+ */
+export function appendTodo(store: Store, task: NewTask): string {
+  if (store.readonly) {
+    throw new Error(`Doc ${store.id} is read-only`);
+  }
+  let noteId = store.getModelsByFlavour('affine:note')[0]?.id;
+  if (!noteId) {
+    const root = store.root;
+    if (!root) throw new Error(`Doc ${store.id} has no root block`);
+    noteId = store.addBlock('affine:note', {}, root.id);
+  }
+  return store.addBlock(
+    'affine:list',
+    {
+      type: 'todo',
+      checked: false,
+      text: new Text(task.text),
+      ...(task.due ? { due: task.due } : {}),
+      ...(task.priority ? { priority: task.priority } : {}),
+    } as Partial<ListBlockModel['props']>,
+    noteId
+  );
 }

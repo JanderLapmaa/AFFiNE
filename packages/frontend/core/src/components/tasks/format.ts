@@ -1,5 +1,5 @@
 import type { TaskGroup, TaskRow } from '@affine/core/modules/tasks';
-import { addDays, localDay } from '@affine/core/modules/tasks';
+import { addDays, localDay } from '@affine/core/modules/tasks/date';
 import { i18nTime, type useI18n } from '@affine/i18n';
 
 type I18n = ReturnType<typeof useI18n>;

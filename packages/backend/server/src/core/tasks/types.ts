@@ -90,3 +90,18 @@ export class UpdateTaskInput {
   })
   priority?: number | null;
 }
+
+@InputType()
+export class CreateTaskInput {
+  @Field({ description: 'Text of the todo' })
+  text!: string;
+
+  @Field(() => String, { nullable: true, description: 'YYYY-MM-DD' })
+  due?: string | null;
+
+  @Field(() => Int, {
+    nullable: true,
+    description: '1 to 3; null or 0 for none',
+  })
+  priority?: number | null;
+}

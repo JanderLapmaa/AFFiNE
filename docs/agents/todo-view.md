@@ -93,6 +93,14 @@ The UI talks only to `TasksService` (workspace scope), behind the
   has no doc record.
 - Doc references in a todo's text arrive as `additional.refs` (see
   [indexer.md](indexer.md)); `TaskRow.title` already has the titles filled in.
+- Quick add: `quickAdd(text, { defaultDue })` parses tokens
+  (`quick-add.ts`), then `TaskSource.create` appends an unchecked todo to the
+  Tasks doc (`TASKS_DOC_ID`). The local source creates the doc on first use
+  and holds it like after a write; the cloud source calls the server's
+  `createTask` and shows the returned row until a later list has it. The
+  desktop popup (`apps/electron/src/main/quick-add/`, renderer side in
+  `electron-renderer/src/popup/quick-add` and `app/effects/quick-add.ts`)
+  goes through the same `quickAdd`.
 - Pure rules live in `projection.ts` and `date.ts`; the clock is the
   injectable `TasksClockStore`. Tests: `__tests__/tasks-service.spec.ts`
   (Seam 1, built through `Framework`).

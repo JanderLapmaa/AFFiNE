@@ -8,6 +8,7 @@ import { applicationMenuEvents } from './application-menu';
 import { beforeAppQuit } from './cleanup';
 import { logger } from './logger';
 import { powerEvents } from './power';
+import { quickAddEvents } from './quick-add';
 import { recordingEvents } from './recording';
 import { checkSource } from './security-restrictions';
 import { sharedStorageEvents } from './shared-storage';
@@ -22,6 +23,7 @@ export const allEvents = {
   sharedStorage: sharedStorageEvents,
   recording: recordingEvents,
   popup: popupEvents,
+  quickAdd: quickAddEvents,
   power: powerEvents,
 };
 

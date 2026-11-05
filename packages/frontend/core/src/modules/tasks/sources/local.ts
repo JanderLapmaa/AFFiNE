@@ -22,8 +22,14 @@ import type { DocsService } from '../../doc/services/docs';
 import type { WorkspaceService } from '../../workspace';
 import { type IndexedTask, parseIndexedTask } from '../projection';
 import type { TasksState } from '../types';
-import { splitTaskId, writeTaskValues } from './doc-write';
-import type { Patch, TaskSource, TaskValues } from './types';
+import {
+  appendTodo,
+  splitTaskId,
+  TASKS_DOC_ID,
+  TASKS_DOC_TITLE,
+  writeTaskValues,
+} from './doc-write';
+import type { NewTask, Patch, TaskSource, TaskValues } from './types';
 
 // memory-indexer rejects a search where skip + limit exceeds this.
 const INDEXER_WINDOW = 10_000;
@@ -313,6 +319,27 @@ export class LocalTaskSource implements TaskSource {
     } finally {
       live.writes--;
       this.releaseIfCaughtUp(ref.docId);
+    }
+  }
+
+  /**
+   * Appends the task to the Tasks doc, creating the doc when there is none.
+   * The doc is held like after any write, so the row shows at once.
+   */
+  async create(task: NewTask): Promise<string> {
+    const docId = TASKS_DOC_ID;
+    if (!this.docsService.list.doc$(docId).value) {
+      this.docsService.createDoc({ id: docId, title: TASKS_DOC_TITLE });
+    }
+    const live = this.holdDoc(docId);
+    try {
+      await live.ready;
+      const blockId = appendTodo(live.doc.blockSuiteDoc, task);
+      this.readLive(docId, live);
+      return `${docId}:${blockId}`;
+    } finally {
+      live.writes--;
+      this.releaseIfCaughtUp(docId);
     }
   }
 

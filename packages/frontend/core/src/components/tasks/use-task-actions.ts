@@ -4,13 +4,14 @@ import {
   type TaskRow,
   TasksService,
   type TasksUndo,
+  type TasksViewId,
 } from '@affine/core/modules/tasks';
 import { useI18n } from '@affine/i18n';
 import { useService } from '@toeverything/infra';
 import { useCallback, useMemo } from 'react';
 
 import { dueLabel } from './format';
-import { isInbox } from './triage';
+import { defaultDueFor, isInbox } from './triage';
 import { useLocale } from './use-now';
 
 const fire = (promise: Promise<unknown>) => {
@@ -82,8 +83,45 @@ export function useTaskActions() {
     [t]
   );
 
+  /**
+   * Quick add from `view` (Today and Tomorrow give their date). Resolves
+   * true once the task is added, false after showing the error toast.
+   */
+  const quickAdd = useCallback(
+    async (text: string, view: TasksViewId): Promise<boolean> => {
+      try {
+        const { due } = await tasksService.quickAdd(text, {
+          defaultDue: defaultDueFor(view, tasksService.now()),
+        });
+        notify.success(
+          {
+            title: t['com.affine.tasks.toast.added']({
+              where: due
+                ? dueLabel(
+                    due,
+                    t,
+                    { relativePast: false },
+                    tasksService.now(),
+                    locale
+                  )
+                : t['com.affine.tasks.view.inbox'](),
+            }),
+          },
+          { duration: 2000 }
+        );
+        return true;
+      } catch (error) {
+        console.error(error);
+        notify.error({ title: t['com.affine.tasks.toast.error']() });
+        return false;
+      }
+    },
+    [locale, t, tasksService]
+  );
+
   return useMemo(
     () => ({
+      quickAdd,
       setDue: (task: TaskRow, due: string | null) => {
         fire(
           run(
@@ -125,6 +163,6 @@ export function useTaskActions() {
         );
       },
     }),
-    [locale, run, t, tasksService]
+    [locale, quickAdd, run, t, tasksService]
   );
 }

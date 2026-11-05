@@ -12,6 +12,14 @@ import {
   Text as YText,
 } from 'yjs';
 
+/**
+ * Id of the doc that quick-added tasks go to, one per workspace. It is fixed
+ * rather than recorded in workspace metadata, so every client and the server
+ * find the same doc without a lookup and can't create two of them.
+ */
+export const TASKS_DOC_ID = 'tasks-doc';
+export const TASKS_DOC_TITLE = 'Tasks';
+
 /** Task fields as indexed in `additional` of a todo list block. */
 export interface TaskFields {
   listType: 'todo';

@@ -845,6 +845,15 @@ export interface CreateMcpCredentialInput {
   workspaceId: Scalars['String']['input'];
 }
 
+export interface CreateTaskInput {
+  /** YYYY-MM-DD */
+  due?: InputMaybe<Scalars['String']['input']>;
+  /** 1 to 3; null or 0 for none */
+  priority?: InputMaybe<Scalars['Int']['input']>;
+  /** Text of the todo */
+  text: Scalars['String']['input'];
+}
+
 export interface CreateUserInput {
   email: Scalars['String']['input'];
   name?: InputMaybe<Scalars['String']['input']>;
@@ -1783,6 +1792,8 @@ export interface Mutation {
   createMcpCredential: RevealedMcpCredentialType;
   createReply: ReplyObjectType;
   createSelfhostWorkspaceCustomerPortal: Scalars['String']['output'];
+  /** Add an unchecked todo to the workspace Tasks doc (created when missing); returns the new task */
+  createTask: WorkspaceTask;
   /** Create a new user */
   createUser: UserType;
   /** Create a new workspace */
@@ -2003,6 +2014,11 @@ export interface MutationCreateReplyArgs {
 }
 
 export interface MutationCreateSelfhostWorkspaceCustomerPortalArgs {
+  workspaceId: Scalars['String']['input'];
+}
+
+export interface MutationCreateTaskArgs {
+  input: CreateTaskInput;
   workspaceId: Scalars['String']['input'];
 }
 
@@ -6013,6 +6029,32 @@ export type CreateSelfhostCustomerPortalMutation = {
   createSelfhostWorkspaceCustomerPortal: string;
 };
 
+export type CreateTaskMutationVariables = Exact<{
+  workspaceId: Scalars['String']['input'];
+  input: CreateTaskInput;
+}>;
+
+export type CreateTaskMutation = {
+  __typename?: 'Mutation';
+  createTask: {
+    __typename?: 'WorkspaceTask';
+    docId: string;
+    blockId: string;
+    text: string;
+    heading: string | null;
+    order: number;
+    checked: boolean;
+    due: string | null;
+    priority: number | null;
+    completedAt: number | null;
+    refs: Array<{
+      __typename?: 'WorkspaceTaskRef';
+      offset: number;
+      docId: string;
+    }>;
+  };
+};
+
 export type CreateWorkspaceMutationVariables = Exact<{ [key: string]: never }>;
 
 export type CreateWorkspaceMutation = {
@@ -8494,6 +8536,11 @@ export type Mutations =
       name: 'createSelfhostCustomerPortalMutation';
       variables: CreateSelfhostCustomerPortalMutationVariables;
       response: CreateSelfhostCustomerPortalMutation;
+    }
+  | {
+      name: 'createTaskMutation';
+      variables: CreateTaskMutationVariables;
+      response: CreateTaskMutation;
     }
   | {
       name: 'createWorkspaceMutation';

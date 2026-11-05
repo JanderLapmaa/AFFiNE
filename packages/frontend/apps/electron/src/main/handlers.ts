@@ -9,6 +9,7 @@ import { configStorageHandlers } from './config-storage';
 import { findInPageHandlers } from './find-in-page';
 import { importHandlers } from './import';
 import { getLogFilePath, logger, revealLogFile } from './logger';
+import { quickAddHandlers } from './quick-add';
 import { recordingHandlers } from './recording';
 import { checkSource } from './security-restrictions';
 import { sharedStorageHandlers } from './shared-storage';
@@ -45,6 +46,7 @@ export const allHandlers = {
   worker: workerHandlers,
   recording: recordingHandlers,
   popup: popupHandlers,
+  quickAdd: quickAddHandlers,
   i18n: i18nHandlers,
   byokStorage: byokStorageHandlers,
   auth: authHandlers,

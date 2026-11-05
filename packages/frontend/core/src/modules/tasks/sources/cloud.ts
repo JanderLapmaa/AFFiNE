@@ -37,7 +37,7 @@ import type {
 } from '../services/tasks-cloud-api';
 import type { TasksState } from '../types';
 import { splitTaskId } from './doc-write';
-import type { Patch, TaskSource, TaskValues } from './types';
+import type { NewTask, Patch, TaskSource, TaskValues } from './types';
 
 /** The list is re-fetched this often while the view is open and visible. */
 export const POLL_MS = 15_000;
@@ -104,7 +104,7 @@ export class CloudTaskSource implements TaskSource {
   constructor(
     private readonly api: Pick<
       TasksCloudApi,
-      'fetchTasks' | 'updateTask' | 'cacheKey'
+      'fetchTasks' | 'updateTask' | 'createTask' | 'cacheKey'
     >,
     private readonly cache: GlobalCache,
     /** The server has no task API: the caller falls back to the indexer. */
@@ -142,6 +142,14 @@ export class CloudTaskSource implements TaskSource {
   private readonly overlay$ = new BehaviorSubject(0);
 
   private readonly patches = new Map<string, PatchEntry>();
+  /**
+   * Tasks this client added, shown until a list fetched after the add (which
+   * has them, the server extracts before it answers) replaces them.
+   */
+  private readonly added = new Map<
+    string,
+    { row: IndexedTask; afterSeq: number }
+  >();
   /** Row errors, with the fetch count when the write failed. */
   private readonly errors = new Map<string, { message: string; seq: number }>();
   private notReadyAttempts = 0;
@@ -320,14 +328,25 @@ export class CloudTaskSource implements TaskSource {
   // --- optimistic patches -------------------------------------------------
 
   private effectiveRows(): IndexedTask[] {
-    if (!this.patches.size && !this.errors.size) return this.serverRows;
-    return this.serverRows.map(row => {
+    const rows = this.withAdded();
+    if (!this.patches.size && !this.errors.size) return rows;
+    return rows.map(row => {
       const id = idOf(row);
       const patch = this.patches.get(id)?.patch;
       const error = this.errors.get(id)?.message;
       if (!patch && !error) return row;
       return { ...row, ...patch, ...(error ? { error } : {}) };
     });
+  }
+
+  /** The server rows plus own added tasks the server list doesn't show yet. */
+  private withAdded(): IndexedTask[] {
+    if (!this.added.size) return this.serverRows;
+    const present = new Set(this.serverRows.map(idOf));
+    const extra = [...this.added]
+      .filter(([id]) => !present.has(id))
+      .map(([, entry]) => entry.row);
+    return extra.length ? [...this.serverRows, ...extra] : this.serverRows;
   }
 
   private bump() {
@@ -371,6 +390,9 @@ export class CloudTaskSource implements TaskSource {
    * older fetch may show the values from before the write.
    */
   private reconcile(seq: number) {
+    for (const [id, entry] of this.added) {
+      if (entry.afterSeq < seq) this.added.delete(id);
+    }
     const byId = new Map(this.serverRows.map(row => [idOf(row), row]));
     for (const [id, entry] of this.patches) {
       if (entry.afterSeq >= seq) continue;
@@ -432,8 +454,32 @@ export class CloudTaskSource implements TaskSource {
     return previous;
   }
 
+  /**
+   * Adds the task through the server (which creates the Tasks doc when
+   * needed). The row shows as soon as the server answers.
+   */
+  async create(task: NewTask): Promise<string> {
+    let row: IndexedTask;
+    try {
+      row = await this.api.createTask({
+        text: task.text,
+        due: task.due,
+        priority: task.priority || null,
+      });
+    } catch (error) {
+      if (isUnsupported(UserFriendlyError.fromAny(error))) this.onUnsupported();
+      throw error;
+    }
+    const id = idOf(row);
+    this.added.set(id, { row, afterSeq: this.startedSeq });
+    this.bump();
+    this.refresh$.next();
+    return id;
+  }
+
   dispose() {
     this.disposed = true;
+    this.added.clear();
     this.refreshEffect.unsubscribe();
     clearTimeout(this.expiryTimer);
     this.patches.clear();

@@ -8227,6 +8227,32 @@ export function useAFFiNEI18N(): {
       */
     ["com.affine.tasks.toast.undo"](): string;
     /**
+      * `Added to {{where}}`
+      */
+    ["com.affine.tasks.toast.added"](options: {
+        readonly where: string;
+    }): string;
+    /**
+      * `Add task`
+      */
+    ["com.affine.tasks.add.label"](): string;
+    /**
+      * `Add task, e.g. Call bank @tomorrow !high`
+      */
+    ["com.affine.tasks.add.placeholder"](): string;
+    /**
+      * `Enter to add · Esc to close`
+      */
+    ["com.affine.tasks.quick-add.hint"](): string;
+    /**
+      * `Adding…`
+      */
+    ["com.affine.tasks.quick-add.adding"](): string;
+    /**
+      * `Open a workspace in AFFiNE first`
+      */
+    ["com.affine.tasks.quick-add.no-workspace"](): string;
+    /**
       * `Couldn't update the task`
       */
     ["com.affine.tasks.toast.error"](): string;

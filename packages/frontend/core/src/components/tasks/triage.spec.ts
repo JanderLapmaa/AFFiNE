@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { datePresets, nextMonday, rowShortcut } from './triage';
+import { datePresets, defaultDueFor, nextMonday, rowShortcut } from './triage';
 
 describe('nextMonday', () => {
   test('is strictly after today', () => {
@@ -49,5 +49,18 @@ describe('rowShortcut', () => {
     expect(press('t', { metaKey: true })).toBeNull();
     expect(press('t', { target: new EventTarget() })).toBeNull();
     expect(press('x')).toBeNull();
+  });
+});
+
+describe('defaultDueFor', () => {
+  const noon = new Date(2026, 9, 28, 12).getTime();
+  test.each([
+    ['today', '2026-10-28'],
+    ['tomorrow', '2026-10-29'],
+    ['inbox', null],
+    ['next7', null],
+    ['all', null],
+  ] as const)('%s', (view, due) => {
+    expect(defaultDueFor(view, noon)).toBe(due);
   });
 });

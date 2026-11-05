@@ -12,6 +12,7 @@ import { registerEvents } from './events';
 import { registerHandlers } from './handlers';
 import { logger } from './logger';
 import { registerProtocol } from './protocol';
+import { setupQuickAdd } from './quick-add';
 import { setupRecordingFeature } from './recording/feature';
 import { ensureSecureLinuxPasswordStore } from './secure-storage';
 import { registerSecurityRestrictions } from './security-restrictions';
@@ -122,6 +123,7 @@ app
   .then(registerUpdater)
   .then(setupRecordingFeature)
   .then(setupTrayState)
+  .then(setupQuickAdd)
   .catch(e => console.error('Failed create window:', e));
 
 if (process.env.SENTRY_RELEASE) {

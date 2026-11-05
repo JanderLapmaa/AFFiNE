@@ -83,6 +83,10 @@ the gate. `--pool=threads` and `--no-isolate` did not help.
   mermaid and typst `*-preview.integration.spec.ts` (Playwright browser not
   installed) and `src/utils/__tests__/first-app-data.spec.ts` (`localStorage`
   undefined).
+- Electron specs that import `src/main/logger.ts` unmocked (for example
+  `test/main/recording-feature.spec.ts`, picked up by `vitest related` when a
+  main-process file changes) throw `REPLACE_ME_BUILD_ENV is not defined`
+  unless `BUILD_TYPE` is set. Run `check:changed` with `BUILD_TYPE=canary`.
 - `oxfmt --check .` reports `AGENTS.md` and `docs/agents/tasks-ui-prototype.html`.
 - `vitest` can print "something prevents Vite server from exiting" after all
   tests pass; that is a 10 s shutdown delay, not a test failure.

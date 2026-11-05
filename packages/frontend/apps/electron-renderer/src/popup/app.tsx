@@ -8,6 +8,7 @@ import { appInfo } from '@affine/electron-api';
 import { Framework, FrameworkRoot } from '@toeverything/infra';
 
 import * as styles from './app.css';
+import { QuickAdd } from './quick-add';
 import { Recording } from './recording';
 
 const framework = new Framework();
@@ -18,7 +19,7 @@ configureElectronStateStorageImpls(framework);
 configureDesktopApiModule(framework);
 const frameworkProvider = framework.provider();
 
-const mode = appInfo?.windowName as 'notification' | 'recording';
+const mode = appInfo?.windowName as 'notification' | 'recording' | 'quick-add';
 
 export function App() {
   return (
@@ -27,6 +28,7 @@ export function App() {
         <I18nProvider>
           <div className={styles.root} data-is-windows={environment.isWindows}>
             {mode === 'recording' && <Recording />}
+            {mode === 'quick-add' && <QuickAdd />}
           </div>
         </I18nProvider>
       </ThemeProvider>

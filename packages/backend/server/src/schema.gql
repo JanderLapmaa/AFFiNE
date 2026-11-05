@@ -726,6 +726,17 @@ input CreateMcpCredentialInput {
   workspaceId: String!
 }
 
+input CreateTaskInput {
+  """YYYY-MM-DD"""
+  due: String
+
+  """1 to 3; null or 0 for none"""
+  priority: Int
+
+  """Text of the todo"""
+  text: String!
+}
+
 input CreateUserInput {
   email: String!
   name: String
@@ -1591,6 +1602,11 @@ type Mutation {
   createMcpCredential(input: CreateMcpCredentialInput!): RevealedMcpCredentialType!
   createReply(input: ReplyCreateInput!): ReplyObjectType!
   createSelfhostWorkspaceCustomerPortal(workspaceId: String!): String!
+
+  """
+  Add an unchecked todo to the workspace Tasks doc (created when missing); returns the new task
+  """
+  createTask(input: CreateTaskInput!, workspaceId: String!): WorkspaceTask!
 
   """Create a new user"""
   createUser(input: CreateUserInput!): UserType!

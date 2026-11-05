@@ -23,8 +23,9 @@ import {
   type DocInfo,
   type IndexedTask,
 } from '../projection';
+import { parseQuickAdd } from '../quick-add';
 import { CloudTaskSource } from '../sources/cloud';
-import { splitTaskId } from '../sources/doc-write';
+import { splitTaskId, TASKS_DOC_ID } from '../sources/doc-write';
 import { LocalTaskSource } from '../sources/local';
 import type { Patch, TaskSource, TaskValues } from '../sources/types';
 import type {
@@ -40,6 +41,15 @@ import type { TasksClockStore } from './tasks-clock';
 import type { TasksCloudApi } from './tasks-cloud-api';
 
 const DUE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** What `quickAdd` created. */
+export interface QuickAddResult {
+  /** `docId:blockId` of the new task */
+  id: string;
+  title: string;
+  due: string | null;
+  priority: TaskPriority;
+}
 
 const EMPTY_COUNTS: TasksCounts = {
   inbox: 0,
@@ -346,6 +356,47 @@ export class TasksService extends Service {
       checked: !before.checked,
       completedAt: before.checked ? null : now,
     }));
+  }
+
+  /**
+   * Adds an unchecked task to the workspace's Tasks doc (`TASKS_DOC_ID`,
+   * created on first use, restored when it was trashed). Date and priority
+   * tokens in `input` (`Call bank @tomorrow !high`, see `parseQuickAdd`) are
+   * removed from the text and set on the task; without a date token the task
+   * gets `defaultDue` (the Today and Tomorrow views pass theirs), else it
+   * lands in Inbox. Rejects when no text is left.
+   */
+  quickAdd(
+    input: string,
+    options: { defaultDue?: string | null } = {}
+  ): Promise<QuickAddResult> {
+    const parsed = parseQuickAdd(input, localDay(this.clock.now()));
+    const due = parsed.due ?? options.defaultDue ?? null;
+    if (!parsed.text) {
+      return Promise.reject(new Error('A task needs some text'));
+    }
+    if (due !== null && !DUE_RE.test(due)) {
+      return Promise.reject(new Error(`Invalid due date: ${due}`));
+    }
+    const task = { text: parsed.text, due, priority: parsed.priority ?? 0 };
+    const run = this.writeQueue
+      .catch(() => {})
+      .then(async (): Promise<QuickAddResult> => {
+        const record = this.docsService.list.doc$(TASKS_DOC_ID).value;
+        if (record?.trash$.value) await record.restoreFromTrash();
+        const source = this.source$.value;
+        let id: string;
+        try {
+          id = await source.create(task);
+        } catch (error) {
+          // A server without the create API switched us to the indexer.
+          if (this.source$.value === source) throw error;
+          id = await this.source$.value.create(task);
+        }
+        return { id, title: task.text, due, priority: task.priority };
+      });
+    this.writeQueue = run;
+    return run;
   }
 
   override dispose() {

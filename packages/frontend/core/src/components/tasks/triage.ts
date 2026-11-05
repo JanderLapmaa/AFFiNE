@@ -1,4 +1,8 @@
-import type { TaskPriority, TaskRow } from '@affine/core/modules/tasks';
+import type {
+  TaskPriority,
+  TaskRow,
+  TasksViewId,
+} from '@affine/core/modules/tasks';
 import { addDays, localDay } from '@affine/core/modules/tasks';
 import type { KeyboardEvent } from 'react';
 
@@ -24,6 +28,17 @@ export function datePresets(now = Date.now()): DatePreset[] {
     { id: 'next-monday', date: nextMonday(today) },
     { id: 'in-a-week', date: addDays(today, 7) },
   ];
+}
+
+/**
+ * The date a task added from `view` gets when it has no date token: the
+ * day of the Today and Tomorrow views, none (Inbox) elsewhere.
+ */
+export function defaultDueFor(view: TasksViewId, now = Date.now()) {
+  const today = localDay(now);
+  if (view === 'today') return today;
+  if (view === 'tomorrow') return addDays(today, 1);
+  return null;
 }
 
 /** Open task without a date (a priority alone keeps it in the Inbox). */

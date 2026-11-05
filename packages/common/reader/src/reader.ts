@@ -1026,4 +1026,4 @@ export function readAllDocIdsFromRootDoc(
 }
 
 export { parseBlock, parseBlockToMd, parsePageDoc } from './doc-parser/parser';
-export { readTodoBlocks } from './task-fields';
+export { readTodoBlocks, TASKS_DOC_ID, TASKS_DOC_TITLE } from './task-fields';

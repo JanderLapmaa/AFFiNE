@@ -10,7 +10,8 @@ import { TasksClockStore } from './services/tasks-clock';
 import { TasksCloudApi } from './services/tasks-cloud-api';
 
 export { addDays, localDay } from './date';
-export { TasksService } from './services/tasks';
+export { type ParsedQuickAdd, parseQuickAdd } from './quick-add';
+export { type QuickAddResult, TasksService } from './services/tasks';
 export { TasksClockStore } from './services/tasks-clock';
 export type {
   TaskGroup,

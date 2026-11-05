@@ -220,6 +220,37 @@ Confirmed by the user while building:
     - **Server import of `@affine/reader`:** a relative import failed under the server's ava loader ("Invalid or unexpected token"). Phase 1 has to make the extractor importable from the server, for example by moving the task-field code into a module that only depends on `yjs` and adding the server dependency, so that the server, the JS reader and Rust `task_fields.rs` can't drift apart.
     - **Not proven by the spike:** that blocksuite's open editor re-renders the remote `checked` change. That is the normal collaboration path, but it gets checked in the phase 3 hand-test.
 
+- **Quick add (2026-11-05).** Built as phase 6, with these choices (made by
+  the implementing agent on the user's go-ahead to decide):
+  - **Target doc:** a normal, **visible** `Tasks` doc with the fixed id
+    `TASKS_DOC_ID` (`tasks-doc`, in `@affine/reader/task-fields`, shared by
+    client and server). A fixed id replaces the workspace-metadata record: every
+    client finds the doc without a lookup and none can create a second one. A
+    trashed Tasks doc is restored on the next quick add. Hiding the doc (stories
+    56, 57, 59), the "Quick add" label and editing a quick-add title (story 58)
+    are **not built**: while the doc is visible its rows link to it like any
+    other doc, and its titles are edited there.
+  - **Cloud path:** a new `createTask(workspaceId, input: { text, due?,
+priority? })` mutation. Under a per-workspace lock the server creates the
+    doc when missing (`DocWriter.createDoc` with the fixed id, registered in the
+    root doc) and appends the todo as one Yjs delta, then extracts the doc
+    before answering. No migration. Client-side appends were rejected: a device
+    that hasn't downloaded the doc would create a second page root. A server
+    without the mutation falls back to the indexer source, which writes the doc
+    locally.
+  - **Tokens:** `parseQuickAdd` (`modules/tasks/quick-add.ts`) reads `@today`,
+    `@tomorrow`/`@tmr`, weekday names (the nearest such day, today included),
+    `@nextweek` (next Monday), `@+Nd`, `@YYYY-MM-DD`, `!1`-`!3` and
+    `!low`/`!med`/`!high`. Tokens are whole words; unknown ones stay in the text.
+  - **UI:** an Add task field at the top of every view but Completed, on desktop
+    and mobile (shared `TaskList`); Today and Tomorrow give their date to a task
+    without a date token. No Android floating button (story 52).
+  - **Desktop global shortcut:** `Alt+A` anywhere opens a quick-add popup
+    (`apps/electron/src/main/quick-add/`). The popup hands the text to the
+    active app tab, which adds it to its current workspace; no tab answering in
+    10 s shows "Open a workspace in AFFiNE first". It needs AFFiNE running
+    (closing to the tray keeps it available).
+
 ## Testing Decisions
 
 - A good test drives a module through its public interface and asserts on what a user would see or what ends up in the doc. It should not depend on how the module is built internally. Tests use fixed clocks, and they build Yjs docs in the test rather than relying on large binary fixtures where possible.

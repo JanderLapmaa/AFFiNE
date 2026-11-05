@@ -1,3 +1,4 @@
+import { TASKS_DOC_ID } from '@affine/reader/task-fields';
 import {
   Args,
   Mutation,
@@ -13,6 +14,7 @@ import { UserType } from '../user';
 import { WorkspaceType } from '../workspaces';
 import { TaskService } from './service';
 import {
+  CreateTaskInput,
   UpdateTaskInput,
   WorkspaceTaskObjectType,
   WorkspaceTasksObjectType,
@@ -74,6 +76,24 @@ export class TaskResolver {
       blockId,
       input
     );
+    return toObject(row);
+  }
+
+  @Mutation(() => WorkspaceTaskObjectType, {
+    description:
+      'Add an unchecked todo to the workspace Tasks doc (created when missing); returns the new task',
+  })
+  async createTask(
+    @CurrentUser() me: UserType,
+    @Args('workspaceId') workspaceId: string,
+    @Args('input') input: CreateTaskInput
+  ): Promise<WorkspaceTaskObjectType> {
+    await this.ac
+      .user(me.id)
+      .workspace(workspaceId)
+      .doc(TASKS_DOC_ID)
+      .assert('Doc.Update');
+    const row = await this.service.create(me.id, workspaceId, input);
     return toObject(row);
   }
 }

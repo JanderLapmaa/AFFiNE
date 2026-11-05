@@ -13,7 +13,7 @@ import { getCurrentDisplay } from './utils';
 
 type PopupWindowType = 'notification' | 'recording';
 
-async function getAdditionalArguments(name: string) {
+export async function getAdditionalArguments(name: string) {
   const { getExposedMeta } = await import('../exposed');
   const mainExposedMeta = getExposedMeta();
   return [

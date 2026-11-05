@@ -1610,6 +1610,28 @@ export const createSelfhostCustomerPortalMutation = {
 }`,
 };
 
+export const createTaskMutation = {
+  id: 'createTaskMutation' as const,
+  op: 'createTask',
+  query: `mutation createTask($workspaceId: String!, $input: CreateTaskInput!) {
+  createTask(workspaceId: $workspaceId, input: $input) {
+    docId
+    blockId
+    text
+    refs {
+      offset
+      docId
+    }
+    heading
+    order
+    checked
+    due
+    priority
+    completedAt
+  }
+}`,
+};
+
 export const createWorkspaceMutation = {
   id: 'createWorkspaceMutation' as const,
   op: 'createWorkspace',
